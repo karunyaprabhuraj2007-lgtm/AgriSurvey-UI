@@ -22,6 +22,7 @@ import { TahsildarAuditLogsPage } from '@/pages/tahsildar/TahsildarAuditLogsPage
 import { ImageComparisonWorkspacePage } from '@/pages/tahsildar/ImageComparisonWorkspacePage';
 import { CropVerificationPage } from '@/pages/tahsildar/CropVerificationPage';
 import { FinalVerificationReportsPage } from '@/pages/tahsildar/FinalVerificationReportsPage';
+import { FieldSurveillancePage } from '@/pages/tahsildar/FieldSurveillancePage';
 import { FieldWorkerDashboardPage } from '@/pages/field-worker/FieldWorkerDashboardPage';
 import { AdminDashboardPage } from '@/pages/admin/AdminDashboardPage';
 import { GisCropSurveyPage } from '@/pages/gis/GisCropSurveyPage';
@@ -61,6 +62,7 @@ export function App() {
         <Route path="/tahsildar/image-comparison" element={<ProtectedRoute allowedRoles="tahsildar"><ImageComparisonWorkspacePage /></ProtectedRoute>} />
         <Route path="/tahsildar/crop-verification" element={<ProtectedRoute allowedRoles="tahsildar"><CropVerificationPage /></ProtectedRoute>} />
         <Route path="/tahsildar/reports" element={<ProtectedRoute allowedRoles="tahsildar"><FinalVerificationReportsPage /></ProtectedRoute>} />
+        <Route path="/tahsildar/field-surveillance" element={<ProtectedRoute allowedRoles="tahsildar"><FieldSurveillancePage /></ProtectedRoute>} />
         <Route path="/tahsildar/audit-logs" element={<ProtectedRoute allowedRoles="tahsildar"><TahsildarAuditLogsPage /></ProtectedRoute>} />
 
         {/* Field Worker Portal */}

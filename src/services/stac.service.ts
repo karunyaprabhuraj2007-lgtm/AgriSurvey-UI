@@ -27,6 +27,22 @@ function pointBbox(lat: number, lon: number, radiusKm: number): BoundingBox {
   };
 }
 
+/**
+ * The same acquisition (tile + time) can be listed in both collections; keep the
+ * one from the collection listed first in STAC_COLLECTIONS.
+ */
+function dedupeAcquisitions(scenes: SatelliteScene[]): SatelliteScene[] {
+  const byAcquisition = new Map<string, SatelliteScene>();
+  for (const sc of scenes) {
+    const key = `${sc.mgrs_tile || sc.scene_id}|${sc.acquisition_datetime.slice(0, 16)}`;
+    const existing = byAcquisition.get(key);
+    if (!existing || STAC_COLLECTIONS.indexOf(sc.collection) < STAC_COLLECTIONS.indexOf(existing.collection)) {
+      byAcquisition.set(key, sc);
+    }
+  }
+  return [...byAcquisition.values()];
+}
+
 const STAC_API_ENDPOINT = 'https://earth-search.aws.element84.com/v1/search';
 // Order = preference when the same acquisition is listed in both collections
 const STAC_COLLECTIONS = ['sentinel-2-l2a', 'sentinel-2-c1-l2a'];
@@ -138,81 +154,9 @@ export class StacSatelliteService {
       const data = await response.json();
       const features: any[] = data.features || [];
 
-      const allScenes: SatelliteScene[] = features.map((feat: any) => {
-        const props = feat.properties || {};
-        const assets = feat.assets || {};
+      const allScenes: SatelliteScene[] = features.map((feat: any) => this.parseFeature(feat));
 
-        // Parse footprint coordinates from GeoJSON Polygon [lon, lat] -> [lat, lon]
-        let footprintCoords: [number, number][] = [];
-        const ring = feat.geometry?.type === 'MultiPolygon' ? feat.geometry.coordinates?.[0]?.[0] : feat.geometry?.coordinates?.[0];
-        if (Array.isArray(ring)) {
-          footprintCoords = ring.map(([lon, lat]: [number, number]) => [lat, lon]);
-        }
-
-        // Extract spectral band assets. Prefer the HTTPS Cloud-Optimized GeoTIFFs: the
-        // "-jp2" variants point at requester-pays s3:// JPEG2000 files browsers cannot read.
-        const band = (key: string, title: string, gsd: number): SatelliteSceneAsset | undefined => {
-          const cog = assets[key];
-          const jp2 = assets[`${key}-jp2`];
-          const chosen = cog?.href?.startsWith('http') ? cog : jp2?.href?.startsWith('http') ? jp2 : cog || jp2;
-          if (!chosen?.href) return undefined;
-          const rb = chosen['raster:bands']?.[0];
-          return {
-            href: chosen.href,
-            title,
-            gsd,
-            type: chosen.type,
-            scale: typeof rb?.scale === 'number' ? rb.scale : undefined,
-            offset: typeof rb?.offset === 'number' ? rb.offset : undefined,
-          };
-        };
-        const assetMap: SatelliteScene['assets'] = {
-          thumbnail: assets.thumbnail ? { href: assets.thumbnail.href, title: 'Scene Thumbnail (full tile)' } : undefined,
-          visual: band('visual', 'True Color (TCI)', 10),
-          blue: band('blue', 'B02 (Blue 10m)', 10),
-          green: band('green', 'B03 (Green 10m)', 10),
-          red: band('red', 'B04 (Red 10m)', 10),
-          nir: band('nir', 'B08 (NIR 10m)', 10),
-          swir16: band('swir16', 'B11 (SWIR 1.6μm 20m)', 20),
-          swir22: band('swir22', 'B12 (SWIR 2.2μm 20m)', 20),
-          scl: band('scl', 'Scene Classification Layer (SCL 20m)', 20),
-        };
-
-        const projCode = props['proj:epsg'] ?? props['proj:code'];
-        const projEpsg = typeof projCode === 'number' ? projCode : parseInt(String(projCode ?? '').replace(/^EPSG:/i, ''), 10);
-
-        const sceneObj: SatelliteScene = {
-          id: `sc-${feat.id || Date.now()}`,
-          scene_id: feat.id,
-          collection: feat.collection || 'sentinel-2-l2a',
-          acquisition_datetime: props.datetime || props['s2:generation_time'] || new Date().toISOString(),
-          cloud_cover_percentage: Math.round((props['eo:cloud_cover'] ?? 0) * 10) / 10,
-          footprint_coordinates: footprintCoords,
-          thumbnail_url: assets.thumbnail?.href || assets.preview?.href,
-          visual_url: assetMap.visual?.href,
-          assets: assetMap,
-          intersects_plot: true,
-          proj_epsg: Number.isFinite(projEpsg) ? projEpsg : undefined,
-          processing_baseline: props['s2:processing_baseline'],
-          boa_offset_applied: props['earthsearch:boa_offset_applied'],
-          mgrs_tile: props['grid:code']?.replace(/^MGRS-/, '') || props['s2:mgrs_tile'],
-          created_at: new Date().toISOString(),
-        };
-
-        return sceneObj;
-      });
-
-      // The same acquisition (tile + time) can be listed in both collections; keep the
-      // first one in STAC_COLLECTIONS order, then restore newest-first ordering.
-      const byAcquisition = new Map<string, SatelliteScene>();
-      for (const sc of allScenes) {
-        const key = `${sc.mgrs_tile || sc.scene_id}|${sc.acquisition_datetime.slice(0, 16)}`;
-        const existing = byAcquisition.get(key);
-        if (!existing || STAC_COLLECTIONS.indexOf(sc.collection) < STAC_COLLECTIONS.indexOf(existing.collection)) {
-          byAcquisition.set(key, sc);
-        }
-      }
-      const parsedScenes = [...byAcquisition.values()]
+      const parsedScenes = dedupeAcquisitions(allScenes)
         .sort((a, b) => b.acquisition_datetime.localeCompare(a.acquisition_datetime))
         .slice(0, limit);
 
@@ -257,6 +201,119 @@ export class StacSatelliteService {
         dataSource: 'LOCAL_INDEX',
       };
     }
+  }
+
+  /**
+   * All Sentinel-2 passes over a point in a date range, oldest first, following the
+   * STAC "next" links. Used for season-long (e.g. 15-day period) monitoring.
+   */
+  async searchSeason(params: {
+    point: { lat: number; lon: number };
+    startDate: string;
+    endDate: string;
+    maxCloudCover?: number;
+    maxItems?: number;
+    signal?: AbortSignal;
+  }): Promise<SatelliteScene[]> {
+    const maxItems = params.maxItems ?? 400;
+    let body: Record<string, unknown> | null = {
+      collections: STAC_COLLECTIONS,
+      intersects: { type: 'Point', coordinates: [params.point.lon, params.point.lat] },
+      datetime: `${params.startDate}T00:00:00Z/${params.endDate}T23:59:59Z`,
+      limit: 100,
+      sortby: [{ field: 'properties.datetime', direction: 'asc' }],
+      query: { 'eo:cloud_cover': { lt: params.maxCloudCover ?? 80 } },
+    };
+    let url = STAC_API_ENDPOINT;
+    let method = 'POST';
+    const features: any[] = [];
+
+    for (let page = 0; page < 10 && features.length < maxItems; page++) {
+      const response: Response = await fetch(url, {
+        method,
+        headers: { 'Content-Type': 'application/json', Accept: 'application/geo+json' },
+        body: method === 'POST' ? JSON.stringify(body) : undefined,
+        signal: params.signal,
+      });
+      if (!response.ok) throw new Error(`Earth Search STAC HTTP ${response.status}: ${response.statusText}`);
+      const data = await response.json();
+      features.push(...(data.features || []));
+
+      const next = (data.links || []).find((l: any) => l.rel === 'next');
+      if (!next?.href || !(data.features || []).length) break;
+      url = next.href;
+      method = (next.method || 'GET').toUpperCase();
+      body = method === 'POST' ? (next.merge ? { ...body, ...next.body } : next.body ?? body) : null;
+    }
+
+    return dedupeAcquisitions(features.map((feat) => this.parseFeature(feat))).sort((a, b) =>
+      a.acquisition_datetime.localeCompare(b.acquisition_datetime)
+    );
+  }
+
+  /** Convert an Earth Search STAC feature into a SatelliteScene */
+  private parseFeature(feat: any): SatelliteScene {
+    const props = feat.properties || {};
+    const assets = feat.assets || {};
+
+    // Parse footprint coordinates from GeoJSON Polygon [lon, lat] -> [lat, lon]
+    let footprintCoords: [number, number][] = [];
+    const ring = feat.geometry?.type === 'MultiPolygon' ? feat.geometry.coordinates?.[0]?.[0] : feat.geometry?.coordinates?.[0];
+    if (Array.isArray(ring)) {
+      footprintCoords = ring.map(([lon, lat]: [number, number]) => [lat, lon]);
+    }
+
+    // Extract spectral band assets. Prefer the HTTPS Cloud-Optimized GeoTIFFs: the
+    // "-jp2" variants point at requester-pays s3:// JPEG2000 files browsers cannot read.
+    const band = (key: string, title: string, gsd: number): SatelliteSceneAsset | undefined => {
+      const cog = assets[key];
+      const jp2 = assets[`${key}-jp2`];
+      const chosen = cog?.href?.startsWith('http') ? cog : jp2?.href?.startsWith('http') ? jp2 : cog || jp2;
+      if (!chosen?.href) return undefined;
+      const rb = chosen['raster:bands']?.[0];
+      return {
+        href: chosen.href,
+        title,
+        gsd,
+        type: chosen.type,
+        scale: typeof rb?.scale === 'number' ? rb.scale : undefined,
+        offset: typeof rb?.offset === 'number' ? rb.offset : undefined,
+      };
+    };
+    const assetMap: SatelliteScene['assets'] = {
+      thumbnail: assets.thumbnail ? { href: assets.thumbnail.href, title: 'Scene Thumbnail (full tile)' } : undefined,
+      visual: band('visual', 'True Color (TCI)', 10),
+      blue: band('blue', 'B02 (Blue 10m)', 10),
+      green: band('green', 'B03 (Green 10m)', 10),
+      red: band('red', 'B04 (Red 10m)', 10),
+      nir: band('nir', 'B08 (NIR 10m)', 10),
+      swir16: band('swir16', 'B11 (SWIR 1.6μm 20m)', 20),
+      swir22: band('swir22', 'B12 (SWIR 2.2μm 20m)', 20),
+      scl: band('scl', 'Scene Classification Layer (SCL 20m)', 20),
+    };
+
+    const projCode = props['proj:epsg'] ?? props['proj:code'];
+    const projEpsg = typeof projCode === 'number' ? projCode : parseInt(String(projCode ?? '').replace(/^EPSG:/i, ''), 10);
+
+    const sceneObj: SatelliteScene = {
+      id: `sc-${feat.id || Date.now()}`,
+      scene_id: feat.id,
+      collection: feat.collection || 'sentinel-2-l2a',
+      acquisition_datetime: props.datetime || props['s2:generation_time'] || new Date().toISOString(),
+      cloud_cover_percentage: Math.round((props['eo:cloud_cover'] ?? 0) * 10) / 10,
+      footprint_coordinates: footprintCoords,
+      thumbnail_url: assets.thumbnail?.href || assets.preview?.href,
+      visual_url: assetMap.visual?.href,
+      assets: assetMap,
+      intersects_plot: true,
+      proj_epsg: Number.isFinite(projEpsg) ? projEpsg : undefined,
+      processing_baseline: props['s2:processing_baseline'],
+      boa_offset_applied: props['earthsearch:boa_offset_applied'],
+      mgrs_tile: props['grid:code']?.replace(/^MGRS-/, '') || props['s2:mgrs_tile'],
+      created_at: new Date().toISOString(),
+    };
+
+    return sceneObj;
   }
 
   /**

@@ -8,6 +8,7 @@
  */
 
 import React, { useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   X,
   Satellite,
@@ -75,6 +76,7 @@ const TahsildarSatelliteCoordinateModalContent: React.FC<TahsildarSatelliteCoord
   onClose,
   onRegisterMonitoringArea,
 }) => {
+  const navigate = useNavigate();
   const { language } = useLanguage();
   const tl = (key: string) => getTahsildarLabel(key, language);
 
@@ -449,6 +451,19 @@ const TahsildarSatelliteCoordinateModalContent: React.FC<TahsildarSatelliteCoord
                   </p>
                 </div>
 
+                <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={() =>
+                    navigate(
+                      `/tahsildar/field-surveillance?lat=${searchedArea.lat}&lon=${searchedArea.lon}&r=${Math.min(1, searchedArea.radiusKm)}`
+                    )
+                  }
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold rounded-lg transition-colors cursor-pointer"
+                >
+                  <Activity className="w-3.5 h-3.5" />
+                  <span>Open 15-day field surveillance</span>
+                </button>
                 <button
                   type="button"
                   onClick={handleRegisterMonitoring}
@@ -457,6 +472,7 @@ const TahsildarSatelliteCoordinateModalContent: React.FC<TahsildarSatelliteCoord
                   <PlusCircle className="w-3.5 h-3.5 text-emerald-400" />
                   <span>{tl('start15dMonitoringBtn')}</span>
                 </button>
+                </div>
               </div>
 
               {searchResults.dataSource === 'LOCAL_INDEX' && (
