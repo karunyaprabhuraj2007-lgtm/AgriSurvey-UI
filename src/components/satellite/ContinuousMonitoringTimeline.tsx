@@ -1,11 +1,12 @@
 /**
  * AgriSurvey AI — Continuous 15-Day Satellite Monitoring Timeline
- * 
- * Displays 15-day periodic satellite observations, 7 spectral vegetation/moisture indices,
- * honest monsoon cloud outage tracking, growth stage curves, and GM-ML-V2 ML phenology classification.
+ *
+ * Displays 15-day periodic Sentinel-2 observations, 7 spectral vegetation/moisture indices,
+ * honest cloud-gap tracking, growth stages, the seasonal crop-pattern indicator and the
+ * actual imagery of the selected period. Pre-seeded sample records are labelled as such.
  */
 
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   Satellite,
   Calendar,
@@ -33,7 +34,17 @@ import {
   MonitoringArea,
   MonitoringPeriodObservation,
 } from '@/types';
-import { satelliteMonitoringService } from '@/services/satellite-monitoring.service';
+import { mockDb } from '@/services/mock-db';
+import { loadAreaClip, SceneClip, SurveyArea } from '@/lib/sentinel-cog';
+import { ClipImageMode, SceneClipImage } from './SceneClipImage';
+
+const fmtIndex = (v: number | null | undefined, d = 3) =>
+  typeof v === 'number' && Number.isFinite(v) ? v.toFixed(d) : '—';
+
+const areaGeometry = (area: MonitoringArea): SurveyArea =>
+  area.polygon_coordinates && area.polygon_coordinates.length >= 3
+    ? { kind: 'polygon', coordinates: area.polygon_coordinates }
+    : { kind: 'circle', center: { lat: area.latitude, lon: area.longitude }, radiusKm: area.radius_km };
 
 interface ContinuousMonitoringTimelineProps {
   area: MonitoringArea;
@@ -144,6 +155,13 @@ export const ContinuousMonitoringTimeline: React.FC<ContinuousMonitoringTimeline
     observations.length > 0 ? observations[observations.length - 1].id : null
   );
   const [isRefreshing, setIsRefreshing] = useState<boolean>(false);
+  const [refreshError, setRefreshError] = useState<string | null>(null);
+
+  // Imagery of the selected period, re-read from the scene that was measured
+  const [imageMode, setImageMode] = useState<ClipImageMode>('visual');
+  const [clip, setClip] = useState<{ key: string; clip?: SceneClip; error?: string } | null>(null);
+
+  const isSample = observations.some((o) => o.data_origin !== 'SENTINEL2_MEASURED');
 
   const activeIndexMeta = INDICES_CONFIG.find((i) => i.key === selectedIndex) || INDICES_CONFIG[0];
   const selectedObs =
@@ -153,12 +171,34 @@ export const ContinuousMonitoringTimeline: React.FC<ContinuousMonitoringTimeline
   const handleRefresh = async () => {
     if (!onRefreshObservations) return;
     setIsRefreshing(true);
+    setRefreshError(null);
     try {
       await onRefreshObservations();
+    } catch (err) {
+      setRefreshError(err instanceof Error ? err.message : String(err));
     } finally {
       setIsRefreshing(false);
     }
   };
+
+  const clipSceneId = selectedObs?.has_data && !isSample ? selectedObs.scene_ids[0] : undefined;
+  const clipKey = clipSceneId ? `${area.id}|${clipSceneId}` : '';
+  const clipScene = clipSceneId ? mockDb.satelliteScenes.find((sc) => sc.scene_id === clipSceneId) : undefined;
+  useEffect(() => {
+    if (!clipScene) return;
+    const scene = clipScene;
+    const controller = new AbortController();
+    loadAreaClip(scene, areaGeometry(area), { marginM: 250, maxOutputDim: 640, signal: controller.signal })
+      .then((c) => !controller.signal.aborted && setClip({ key: clipKey, clip: c }))
+      .catch((err) => !controller.signal.aborted && setClip({ key: clipKey, error: err instanceof Error ? err.message : String(err) }));
+    return () => controller.abort();
+  }, [clipKey, clipScene, area]);
+  const activeClip =
+    clipSceneId && !clipScene
+      ? { key: clipKey, error: 'Scene details are not cached on this device; press "Check Latest Scan" to reload imagery.' }
+      : clip && clip.key === clipKey
+      ? clip
+      : null;
 
   // Usable observations count
   const usableCount = observations.filter((o) => o.has_data).length;
@@ -172,8 +212,8 @@ export const ContinuousMonitoringTimeline: React.FC<ContinuousMonitoringTimeline
 
   const validPoints = observations
     .map((obs, idx) => {
-      if (!obs.has_data) return null;
       const val = obs.indices[selectedIndex];
+      if (!obs.has_data || typeof val !== 'number' || !Number.isFinite(val)) return null;
       const x =
         observations.length > 1
           ? paddingX + (idx / (observations.length - 1)) * (chartWidth - paddingX * 2)
@@ -207,8 +247,13 @@ export const ContinuousMonitoringTimeline: React.FC<ContinuousMonitoringTimeline
             <div className="flex flex-wrap items-center gap-2">
               <span className="px-2.5 py-1 rounded-full text-xs font-semibold bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 flex items-center gap-1.5 shadow-xs">
                 <Satellite className="w-3.5 h-3.5 text-emerald-400" />
-                Live Satellite Crop Health Monitor
+                Sentinel-2 Crop Monitor
               </span>
+              {isSample && (
+                <span className="px-2.5 py-1 rounded-full text-[11px] font-bold bg-amber-400 text-amber-950">
+                  SAMPLE DATA — not a satellite measurement
+                </span>
+              )}
               <span className="px-2.5 py-1 rounded-full text-[11px] font-medium bg-white/10 text-slate-300 border border-white/10 flex items-center gap-1.5">
                 <Clock className="w-3 h-3 text-cyan-400" />
                 Scans Farm Every {area.interval_days || 15} Days
@@ -229,7 +274,7 @@ export const ContinuousMonitoringTimeline: React.FC<ContinuousMonitoringTimeline
             <div className="flex flex-wrap items-center gap-2 text-xs pt-1">
               <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-white/5 border border-white/10 text-slate-200">
                 <Sprout className="w-3.5 h-3.5 text-emerald-400" />
-                <span>Crop: <strong className="text-white">{area.preferred_crop || 'Sugarcane'}</strong> ({area.preferred_season || 'Kharif'})</span>
+                <span>Declared crop: <strong className="text-white">{area.preferred_crop || 'Not declared'}</strong>{area.preferred_season ? ` (${area.preferred_season})` : ''}</span>
               </span>
 
               <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-white/5 border border-white/10 text-slate-200">
@@ -274,6 +319,77 @@ export const ContinuousMonitoringTimeline: React.FC<ContinuousMonitoringTimeline
           </div>
         </div>
       </div>
+
+      {isSample && (
+        <div className="p-3.5 rounded-xl bg-amber-50 border border-amber-300 text-amber-900 text-xs flex items-start gap-2">
+          <Info className="w-4 h-4 shrink-0 mt-0.5" />
+          <span>
+            These observations are pre-loaded demonstration records, not measurements of this farm.
+            {onRefreshObservations
+              ? ' Press "Check Latest Scan" to replace them with real Sentinel-2 measurements.'
+              : ' Run a satellite scan to replace them with real Sentinel-2 measurements.'}
+          </span>
+        </div>
+      )}
+      {(refreshError || area.last_run_error) && (
+        <div role="alert" className="p-3.5 rounded-xl bg-red-50 border border-red-200 text-red-800 text-xs flex items-start gap-2">
+          <ShieldAlert className="w-4 h-4 shrink-0 mt-0.5" />
+          <span>{refreshError || area.last_run_error}</span>
+        </div>
+      )}
+
+      {!isSample && (area.growth_summary || area.crop_pattern) && (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          <div className="bg-white rounded-xl p-4 border border-slate-200 shadow-xs space-y-2">
+            <h3 className="text-xs font-bold text-slate-800 uppercase tracking-wider flex items-center gap-1.5">
+              <Sprout className="w-4 h-4 text-emerald-600" /> Current growth report
+            </h3>
+            {area.growth_summary && <p className="text-sm text-slate-700">{area.growth_summary}</p>}
+            {area.crop_pattern && (
+              <div className="pt-2 border-t border-slate-100 text-xs space-y-0.5">
+                <p className="font-semibold text-slate-900">
+                  Crop type indicator: {area.crop_pattern.pattern}{' '}
+                  <span className="font-normal text-slate-600">({area.crop_pattern.typical_crops})</span>
+                </p>
+                <p className="text-slate-600">{area.crop_pattern.explanation}</p>
+                {area.crop_pattern.declared_crop_agreement === 'consistent' && (
+                  <p className="text-emerald-800 font-semibold">✓ Consistent with the declared crop</p>
+                )}
+                {area.crop_pattern.declared_crop_agreement === 'differs' && (
+                  <p className="text-amber-800 font-semibold">⚠ Differs from the declared crop — field verification needed</p>
+                )}
+                <p className="text-[10px] text-slate-500">Rule-based seasonal indicator, not a validated crop classifier.</p>
+              </div>
+            )}
+          </div>
+          <div className="bg-white rounded-xl p-4 border border-slate-200 shadow-xs space-y-2">
+            <h3 className="text-xs font-bold text-slate-800 uppercase tracking-wider flex items-center gap-1.5">
+              <ShieldAlert className="w-4 h-4 text-amber-600" /> Alerts ({area.alerts?.length ?? 0})
+            </h3>
+            {!area.alerts?.length && (
+              <p className="text-xs text-slate-600 flex items-center gap-1.5">
+                <CheckCircle className="w-4 h-4 text-emerald-600" /> No alerts for the observed periods.
+              </p>
+            )}
+            <ul className="space-y-1.5 max-h-40 overflow-y-auto">
+              {area.alerts?.map((a, i) => (
+                <li
+                  key={i}
+                  className={`text-[11px] rounded-lg border p-2 ${
+                    a.severity === 'critical'
+                      ? 'bg-red-50 border-red-200 text-red-900'
+                      : a.severity === 'warning'
+                      ? 'bg-amber-50 border-amber-200 text-amber-900'
+                      : 'bg-slate-50 border-slate-200 text-slate-700'
+                  }`}
+                >
+                  <strong>{a.title}.</strong> {a.detail}
+                </li>
+              ))}
+            </ul>
+          </div>
+        </div>
+      )}
 
       {/* Spectral Indices Picker */}
       <div className="bg-white rounded-xl p-4 border border-slate-200 shadow-xs">
@@ -496,7 +612,7 @@ export const ContinuousMonitoringTimeline: React.FC<ContinuousMonitoringTimeline
                   ) : (
                     <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 flex items-center gap-1">
                       <CloudOff className="w-3 h-3" />
-                      Cloud Outage
+                      {obs.scenes_found === 0 && obs.data_origin === 'SENTINEL2_MEASURED' ? 'No pass' : 'Cloud Outage'}
                     </span>
                   )}
                 </div>
@@ -524,7 +640,7 @@ export const ContinuousMonitoringTimeline: React.FC<ContinuousMonitoringTimeline
                     <div className="flex justify-between items-center text-xs">
                       <span className="text-slate-500 font-semibold">{activeIndexMeta.label}:</span>
                       <span className="font-bold font-mono text-slate-900">
-                        {obs.indices[selectedIndex].toFixed(3)}
+                        {fmtIndex(obs.indices[selectedIndex])}
                       </span>
                     </div>
 
@@ -556,7 +672,7 @@ export const ContinuousMonitoringTimeline: React.FC<ContinuousMonitoringTimeline
                   </div>
                 ) : (
                   <div className="text-[11px] text-amber-700 bg-amber-50 p-2 rounded border border-amber-200 mt-2">
-                    {obs.missing_reason || 'Monsoon cloud outage (No observation)'}
+                    {obs.missing_reason || 'No clear observation in this period'}
                   </div>
                 )}
               </div>
@@ -606,7 +722,7 @@ export const ContinuousMonitoringTimeline: React.FC<ContinuousMonitoringTimeline
                       <div key={idx.key} className="p-2.5 rounded-lg bg-slate-50 border border-slate-200">
                         <div className="text-[11px] font-semibold text-slate-500">{idx.label}</div>
                         <div className="text-sm font-bold font-mono text-slate-900 mt-0.5">
-                          {val.toFixed(3)}
+                          {fmtIndex(val)}
                         </div>
                       </div>
                     );
@@ -626,61 +742,104 @@ export const ContinuousMonitoringTimeline: React.FC<ContinuousMonitoringTimeline
                 </div>
               </div>
 
-              {/* GM-ML-V2 Machine Learning Phenology Classifier Card */}
-              <div className="p-4 rounded-xl bg-gradient-to-br from-slate-900 to-slate-800 text-white border border-slate-700 space-y-3">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-bold uppercase tracking-wider text-emerald-400 flex items-center gap-1.5">
-                    <Sparkles className="w-4 h-4" />
-                    GM-ML-V2 Phenology Engine
-                  </span>
-                  <span className="text-[10px] bg-white/10 px-2 py-0.5 rounded text-slate-300 font-mono">
-                    158 Feat
-                  </span>
-                </div>
+              {isSample ? (
+                <div className="p-4 rounded-xl bg-gradient-to-br from-slate-900 to-slate-800 text-white border border-slate-700 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold uppercase tracking-wider text-emerald-400 flex items-center gap-1.5">
+                      <Sparkles className="w-4 h-4" />
+                      Sample model output
+                    </span>
+                    <span className="text-[10px] bg-amber-400 text-amber-950 px-2 py-0.5 rounded font-bold">
+                      Demo only
+                    </span>
+                  </div>
 
-                {selectedObs.crop_prediction ? (
-                  <div>
-                    <div className="text-xs text-slate-400">Classified Crop Identity</div>
-                    <div className="text-lg font-bold text-white mt-0.5 flex items-center justify-between">
-                      <span>{selectedObs.crop_prediction.crop_name}</span>
-                      <span className="text-emerald-400 font-mono text-sm">
-                        {selectedObs.crop_prediction.confidence.toFixed(1)}%
-                      </span>
-                    </div>
-
-                    {/* Threshold warning if confidence < 90% */}
-                    {selectedObs.crop_prediction.needs_field_check && (
-                      <div className="mt-2.5 p-2 rounded-lg bg-amber-500/20 border border-amber-500/40 text-amber-200 text-[11px] flex items-start gap-1.5">
-                        <ShieldAlert className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
-                        <span>Selective Prediction: Below 90% confidence threshold. Flagged for Tahsildar ground verification.</span>
+                  {selectedObs.crop_prediction ? (
+                    <div>
+                      <div className="text-xs text-slate-400">Classified Crop Identity</div>
+                      <div className="text-lg font-bold text-white mt-0.5 flex items-center justify-between">
+                        <span>{selectedObs.crop_prediction.crop_name}</span>
+                        <span className="text-emerald-400 font-mono text-sm">
+                          {selectedObs.crop_prediction.confidence.toFixed(1)}%
+                        </span>
                       </div>
-                    )}
 
-                    {/* Model Ranking */}
-                    <div className="mt-3 space-y-1.5">
-                      <div className="text-[11px] text-slate-400 font-semibold">Classification Probabilities:</div>
-                      {selectedObs.crop_prediction.ranking.map((r) => (
-                        <div key={r.crop} className="flex justify-between items-center text-xs">
-                          <span className="text-slate-300">{r.crop}</span>
-                          <span className="font-mono text-slate-400">{r.fit.toFixed(1)}%</span>
+                      {/* Threshold warning if confidence < 90% */}
+                      {selectedObs.crop_prediction.needs_field_check && (
+                        <div className="mt-2.5 p-2 rounded-lg bg-amber-500/20 border border-amber-500/40 text-amber-200 text-[11px] flex items-start gap-1.5">
+                          <ShieldAlert className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+                          <span>Selective Prediction: Below 90% confidence threshold. Flagged for Tahsildar ground verification.</span>
                         </div>
+                      )}
+
+                      {/* Model Ranking */}
+                      <div className="mt-3 space-y-1.5">
+                        <div className="text-[11px] text-slate-400 font-semibold">Classification Probabilities:</div>
+                        {selectedObs.crop_prediction.ranking.map((r) => (
+                          <div key={r.crop} className="flex justify-between items-center text-xs">
+                            <span className="text-slate-300">{r.crop}</span>
+                            <span className="font-mono text-slate-400">{r.fit.toFixed(1)}%</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="text-xs text-slate-400 italic">
+                      Crop classification requires usable Sentinel-2 phenology features.
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div className="p-3 rounded-xl bg-slate-900 text-white border border-slate-700 space-y-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-xs font-bold text-emerald-400 flex items-center gap-1.5">
+                      <Eye className="w-4 h-4" /> Satellite view
+                    </span>
+                    <div className="flex gap-0.5 bg-white/10 p-0.5 rounded text-[10px]" role="group" aria-label="Band combination">
+                      {(
+                        [
+                          ['visual', 'Natural'],
+                          ['false_color', 'Infrared'],
+                          ['ndvi', 'NDVI'],
+                        ] as [ClipImageMode, string][]
+                      ).map(([m, label]) => (
+                        <button
+                          key={m}
+                          type="button"
+                          aria-pressed={imageMode === m}
+                          onClick={() => setImageMode(m)}
+                          className={`px-1.5 py-0.5 rounded font-semibold ${imageMode === m ? 'bg-emerald-500 text-white' : 'text-slate-300 hover:text-white'}`}
+                        >
+                          {label}
+                        </button>
                       ))}
                     </div>
                   </div>
-                ) : (
-                  <div className="text-xs text-slate-400 italic">
-                    Crop classification requires usable Sentinel-2 phenology features.
-                  </div>
-                )}
-              </div>
+                  {activeClip?.clip ? (
+                    <SceneClipImage
+                      clip={activeClip.clip}
+                      mode={imageMode}
+                      alt={`Sentinel-2 ${imageMode} on ${selectedObs.actual_acquisition_dates[0]}`}
+                      className="aspect-square rounded-lg overflow-hidden"
+                    />
+                  ) : (
+                    <div className="aspect-square rounded-lg border border-slate-700 flex items-center justify-center text-[11px] text-slate-400 p-4 text-center">
+                      {activeClip?.error ?? 'Loading 10 m imagery…'}
+                    </div>
+                  )}
+                  <p className="text-[10px] text-slate-400">
+                    Acquired {selectedObs.actual_acquisition_dates[0]} · yellow outline = monitored area · 10 m pixels, display-stretched.
+                  </p>
+                </div>
+              )}
             </div>
           ) : (
             <div className="p-4 rounded-xl bg-amber-50 border border-amber-200 text-amber-900 text-xs flex items-start gap-3">
               <CloudOff className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
               <div>
-                <p className="font-bold text-amber-800">Observation Suppressed Due to Monsoon Cloud Obscuration</p>
+                <p className="font-bold text-amber-800">No clear observation in this period</p>
                 <p className="text-amber-700 mt-1">
-                  In accordance with remote-sensing integrity guidelines, cloudy intervals during Maharashtra's monsoon are cataloged with transparent cloud badges rather than synthetic approximations. The GM-ML-V2 classifier automatically treats this gap as an unassessed interval while maintaining time-series continuity.
+                  {selectedObs.missing_reason || 'No usable satellite view.'} The period is left empty rather than filled with estimated values.
                 </p>
               </div>
             </div>

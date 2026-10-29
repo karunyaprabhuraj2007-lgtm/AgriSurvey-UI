@@ -615,6 +615,7 @@ export interface SatelliteScene {
     green?: SatelliteSceneAsset;
     blue?: SatelliteSceneAsset;
     nir?: SatelliteSceneAsset;
+    rededge1?: SatelliteSceneAsset;
     swir16?: SatelliteSceneAsset;
     swir22?: SatelliteSceneAsset;
     scl?: SatelliteSceneAsset;
@@ -832,6 +833,18 @@ export interface MonitoringArea {
   total_periods_count: number;
   usable_periods_count: number;
   warnings?: string[];
+  /** Plain-language growth summary from the latest measured run */
+  growth_summary?: string;
+  /** Rule-based seasonal crop-pattern indicator (not a validated classifier) */
+  crop_pattern?: {
+    pattern: string;
+    typical_crops: string;
+    explanation: string;
+    declared_crop_agreement: 'consistent' | 'differs' | 'not_declared' | 'undetermined';
+  };
+  /** Alerts from the latest measured run */
+  alerts?: { severity: 'info' | 'warning' | 'critical'; title: string; detail: string }[];
+  last_run_error?: string;
   created_at: string;
   updated_at: string;
 }
@@ -875,6 +888,8 @@ export interface MonitoringPeriodObservation {
     | 'Maturity'
     | 'Harvested / Senesced'
     | 'Fallow'
+    | 'Sparse / Mixed Cover'
+    | 'Stable Canopy'
     | 'Unassessed';
   health_status: 'Optimal' | 'Mild Stress' | 'High Stress' | 'Cloud Obscured' | 'Insufficient Data';
   delta_ndvi_previous: number | null;
@@ -893,6 +908,11 @@ export interface MonitoringPeriodObservation {
     ndvi_map?: string;
     nir_false_color?: string;
   };
+  /**
+   * Where the values came from. Observations without SENTINEL2_MEASURED are pre-seeded
+   * sample records and must not be presented as survey results.
+   */
+  data_origin?: 'SENTINEL2_MEASURED';
   processed_at: string;
 }
 
@@ -907,7 +927,8 @@ export interface MonitoringInspectionItem {
   crop_type: string;
   priority: 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'ROUTINE';
   reasons: string[];
-  confidence_score: number;
+  /** Model confidence (0-100); null when no trained classifier produced the item */
+  confidence_score: number | null;
   latest_ndvi_delta: number;
   latest_moisture_level: number;
   status: 'PENDING_OFFICER_REVIEW' | 'INSPECTION_ASSIGNED' | 'VERIFIED';

@@ -29,6 +29,13 @@ export interface SceneClipStats {
   ndviMedian: number | null;
   ndviMin: number | null;
   ndviMax: number | null;
+  ndviStd: number | null;
+  /** Soil-adjusted vegetation index (L = 0.5) */
+  saviMean: number | null;
+  /** Green chlorophyll vegetation index, NIR / Green - 1 */
+  gcviMean: number | null;
+  /** Red-edge NDVI from B08 / B05 (null when the red-edge band is unavailable) */
+  ndreMean: number | null;
   /** Enhanced Vegetation Index (less saturated than NDVI over dense canopy) */
   eviMean: number | null;
   /** Moisture index from B08 / B11 (null when the SWIR band is unavailable) */
@@ -64,6 +71,11 @@ export interface SceneClip {
   stats: SceneClipStats;
   reflectance: { scale: number; offset: number; source: string };
 }
+
+export type ClipImageMode = 'visual' | 'false_color' | 'ndvi';
+
+export const clipUrl = (clip: SceneClip, mode: ClipImageMode) =>
+  mode === 'ndvi' ? clip.ndviUrl : mode === 'false_color' ? clip.falseColorUrl : clip.trueColorUrl;
 
 // ---------------------------------------------------------------------------
 // WGS84 -> UTM (Transverse Mercator, Krüger series; sub-millimetre within a zone)
@@ -378,7 +390,7 @@ function pointInRing(lat: number, lon: number, ring: [number, number][]): boolea
 
 /** Read and render a Sentinel-2 scene for a survey area (circle or field polygon). */
 export async function loadAreaClip(scene: SatelliteScene, area: SurveyArea, options: ClipOptions = {}): Promise<SceneClip> {
-  const { red, green, blue, nir, scl, swir16 } = scene.assets;
+  const { red, green, blue, nir, scl, swir16, rededge1 } = scene.assets;
   if (!red || !green || !blue || !nir) {
     throw new Error('This scene does not list the 10 m Blue/Green/Red/NIR Cloud-Optimized GeoTIFF bands.');
   }
@@ -449,13 +461,14 @@ export async function loadAreaClip(scene: SatelliteScene, area: SurveyArea, opti
   const hi: [number, number] = [maxX, maxY];
   const optional = (asset: SatelliteSceneAsset | undefined) =>
     asset && /^https?:\/\//.test(asset.href) ? readBandWindow(asset.href, lo, hi, signal).catch(() => null) : Promise.resolve(null);
-  const [wRed, wGreen, wBlue, wNir, wScl, wSwir] = await Promise.all([
+  const [wRed, wGreen, wBlue, wNir, wScl, wSwir, wRedEdge] = await Promise.all([
     readBandWindow(red.href, lo, hi, signal),
     readBandWindow(green.href, lo, hi, signal),
     readBandWindow(blue.href, lo, hi, signal),
     readBandWindow(nir.href, lo, hi, signal),
     optional(scl),
     optional(swir16),
+    optional(rededge1),
   ]);
 
   const sRed = reflectanceScaling(scene, red);
@@ -463,6 +476,7 @@ export async function loadAreaClip(scene: SatelliteScene, area: SurveyArea, opti
   const sBlue = reflectanceScaling(scene, blue);
   const sNir = reflectanceScaling(scene, nir);
   const sSwir = swir16 ? reflectanceScaling(scene, swir16) : null;
+  const sRedEdge = rededge1 ? reflectanceScaling(scene, rededge1) : null;
 
   const R = new Float32Array(n);
   const G = new Float32Array(n);
@@ -476,6 +490,13 @@ export async function loadAreaClip(scene: SatelliteScene, area: SurveyArea, opti
   let nodata = 0;
   const ndviValues: number[] = [];
   let ndviSum = 0;
+  let ndviSqSum = 0;
+  let saviSum = 0;
+  let saviCount = 0;
+  let gcviSum = 0;
+  let gcviCount = 0;
+  let ndreSum = 0;
+  let ndreCount = 0;
   let ndviMin = Infinity;
   let ndviMax = -Infinity;
   let eviSum = 0;
@@ -518,6 +539,24 @@ export async function loadAreaClip(scene: SatelliteScene, area: SurveyArea, opti
     const v = Math.max(-1, Math.min(1, NDVI[i]));
     ndviValues.push(v);
     ndviSum += v;
+    ndviSqSum += v * v;
+    const saviDen = NIR[i] + R[i] + 0.5;
+    if (saviDen > 0) {
+      saviSum += (1.5 * (NIR[i] - R[i])) / saviDen;
+      saviCount++;
+    }
+    if (Number.isFinite(G[i]) && G[i] > 0.005) {
+      gcviSum += NIR[i] / G[i] - 1;
+      gcviCount++;
+    }
+    if (wRedEdge && sRedEdge) {
+      const re = sampleBilinear(wRedEdge, x, y) * sRedEdge.scale + sRedEdge.offset;
+      const ndreDen = NIR[i] + re;
+      if (Number.isFinite(re) && ndreDen > 0) {
+        ndreSum += (NIR[i] - re) / ndreDen;
+        ndreCount++;
+      }
+    }
     if (v < ndviMin) ndviMin = v;
     if (v > ndviMax) ndviMax = v;
 
@@ -548,6 +587,10 @@ export async function loadAreaClip(scene: SatelliteScene, area: SurveyArea, opti
     ndviMedian: valid ? ndviValues[Math.floor(valid / 2)] : null,
     ndviMin: valid ? ndviMin : null,
     ndviMax: valid ? ndviMax : null,
+    ndviStd: valid ? Math.sqrt(Math.max(0, ndviSqSum / valid - (ndviSum / valid) ** 2)) : null,
+    saviMean: saviCount ? saviSum / saviCount : null,
+    gcviMean: gcviCount ? gcviSum / gcviCount : null,
+    ndreMean: ndreCount ? ndreSum / ndreCount : null,
     eviMean: eviCount ? eviSum / eviCount : null,
     ndmiMean: ndmiCount ? ndmiSum / ndmiCount : null,
     ndwiMean: ndwiCount ? ndwiSum / ndwiCount : null,

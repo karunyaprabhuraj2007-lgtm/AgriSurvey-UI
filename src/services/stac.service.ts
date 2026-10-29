@@ -287,6 +287,7 @@ export class StacSatelliteService {
       green: band('green', 'B03 (Green 10m)', 10),
       red: band('red', 'B04 (Red 10m)', 10),
       nir: band('nir', 'B08 (NIR 10m)', 10),
+      rededge1: band('rededge1', 'B05 (Red Edge 1, 20m)', 20),
       swir16: band('swir16', 'B11 (SWIR 1.6μm 20m)', 20),
       swir22: band('swir22', 'B12 (SWIR 2.2μm 20m)', 20),
       scl: band('scl', 'Scene Classification Layer (SCL 20m)', 20),

@@ -226,15 +226,21 @@ export const InspectionQueueTable: React.FC<InspectionQueueTableProps> = ({ onIn
                     </td>
 
                     <td className="p-3 align-top font-mono font-semibold">
-                      <span
-                        className={
-                          item.confidence_score < 90
-                            ? 'text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded border border-amber-200'
-                            : 'text-slate-700'
-                        }
-                      >
-                        {item.confidence_score.toFixed(1)}%
-                      </span>
+                      {item.confidence_score === null ? (
+                        <span className="text-slate-400 font-sans font-normal text-[11px]" title="Raised by measured satellite changes, not by a crop model">
+                          No model
+                        </span>
+                      ) : (
+                        <span
+                          className={
+                            item.confidence_score < 90
+                              ? 'text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded border border-amber-200'
+                              : 'text-slate-700'
+                          }
+                        >
+                          {item.confidence_score.toFixed(1)}%
+                        </span>
+                      )}
                     </td>
 
                     <td className="p-3 align-top font-mono font-semibold">

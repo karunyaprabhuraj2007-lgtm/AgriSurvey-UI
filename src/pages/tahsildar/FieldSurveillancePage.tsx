@@ -52,10 +52,11 @@ import {
   runSurveillance,
   saveField,
 } from '@/services/field-surveillance.service';
-import { NDVI_CLASSES, NDVI_MASKED_COLOR, SceneClip, SurveyArea } from '@/lib/sentinel-cog';
+import { ClipImageMode, NDVI_CLASSES, NDVI_MASKED_COLOR, SurveyArea, clipUrl } from '@/lib/sentinel-cog';
+import { SceneClipImage } from '@/components/satellite/SceneClipImage';
 
 type AreaMode = 'plot' | 'point' | 'draw';
-type ImageMode = 'visual' | 'false_color' | 'ndvi';
+type ImageMode = ClipImageMode;
 
 const DAY_MS = 24 * 3600 * 1000;
 const isoDate = (d: Date) => d.toISOString().slice(0, 10);
@@ -63,25 +64,6 @@ const rgb = (c: [number, number, number]) => `rgb(${c[0]}, ${c[1]}, ${c[2]})`;
 const fmt = (v: number | null | undefined, d = 2) => (v === null || v === undefined ? '—' : v.toFixed(d));
 const shortDate = (iso: string) =>
   new Date(`${iso.slice(0, 10)}T00:00:00Z`).toLocaleDateString(undefined, { day: '2-digit', month: 'short', timeZone: 'UTC' });
-
-const clipUrl = (clip: SceneClip, mode: ImageMode) =>
-  mode === 'ndvi' ? clip.ndviUrl : mode === 'false_color' ? clip.falseColorUrl : clip.trueColorUrl;
-
-/** Image of one period with the field boundary drawn on top. */
-const ClipImage: React.FC<{ clip: SceneClip; mode: ImageMode; alt: string; className?: string }> = ({ clip, mode, alt, className }) => {
-  const b = clip.bounds;
-  const points = fieldOutline(clip.area)
-    .map(([lat, lon]) => `${(((lon - b.minLon) / (b.maxLon - b.minLon)) * 100).toFixed(2)},${(((b.maxLat - lat) / (b.maxLat - b.minLat)) * 100).toFixed(2)}`)
-    .join(' ');
-  return (
-    <div className={`relative bg-black ${className ?? ''}`}>
-      <img src={clipUrl(clip, mode)} alt={alt} className="w-full h-full object-contain" />
-      <svg className="absolute inset-0 w-full h-full pointer-events-none" viewBox="0 0 100 100" preserveAspectRatio="none">
-        <polygon points={points} fill="none" stroke="#facc15" strokeWidth="1.5" vectorEffect="non-scaling-stroke" />
-      </svg>
-    </div>
-  );
-};
 
 const FitToArea: React.FC<{ outline: [number, number][] | null }> = ({ outline }) => {
   const map = useMap();
@@ -704,7 +686,7 @@ export const FieldSurveillancePage: React.FC = () => {
                         {r?.scene && <span className="font-mono">Acquired {r.scene.acquisition_datetime.slice(0, 16).replace('T', ' ')} UTC</span>}
                       </div>
                       {r?.clip ? (
-                        <ClipImage clip={r.clip} mode={imageMode} alt={`${title} ${imageMode}`} className="aspect-square rounded-xl overflow-hidden" />
+                        <SceneClipImage clip={r.clip} mode={imageMode} alt={`${title} ${imageMode}`} className="aspect-square rounded-xl overflow-hidden" />
                       ) : (
                         <div className="aspect-square rounded-xl border border-slate-700 flex items-center justify-center text-xs text-slate-400 p-6 text-center">
                           {r ? (r.status === 'no_pass' ? 'No satellite pass in this period.' : r.error || 'No usable image.') : 'No earlier clear period.'}
@@ -763,7 +745,7 @@ export const FieldSurveillancePage: React.FC = () => {
                       className={`text-left p-2 rounded-xl border transition-all ${isSel ? 'border-emerald-600 ring-2 ring-emerald-600/20 bg-emerald-50/50' : 'border-slate-200 hover:border-slate-300'}`}
                     >
                       {r?.clip ? (
-                        <ClipImage clip={r.clip} mode={imageMode} alt={`Period ${i + 1}`} className="aspect-square rounded-lg overflow-hidden" />
+                        <SceneClipImage clip={r.clip} mode={imageMode} alt={`Period ${i + 1}`} className="aspect-square rounded-lg overflow-hidden" />
                       ) : (
                         <div className="aspect-square rounded-lg bg-slate-100 flex flex-col items-center justify-center gap-1 text-[10px] text-slate-500 text-center p-2">
                           {!r ? <Loader2 className="w-4 h-4 animate-spin" /> : <CloudOff className="w-4 h-4" />}
