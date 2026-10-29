@@ -37,7 +37,9 @@ export class CropVerificationService {
     if (existing) {
       existing.comparison_result = params.comparisonResult;
       existing.review_notes = params.reviewNotes;
-      existing.similarity_score = params.similarityScore || existing.similarity_score;
+      // Only a measured score is stored; there is no automated image-matching model yet
+      existing.similarity_score = params.similarityScore ?? null;
+      existing.similarity_model_version = params.similarityScore != null ? existing.similarity_model_version : null;
       existing.reviewed_at = new Date().toISOString();
       mockDb.persistAll();
       if (firebaseService.isConfigured) {
@@ -51,8 +53,8 @@ export class CropVerificationService {
       application_id: params.applicationId,
       property_id: params.propertyId,
       comparison_result: params.comparisonResult,
-      similarity_score: params.similarityScore || 92.5,
-      similarity_model_version: 'AgriVision-SIFT-v2.1',
+      similarity_score: params.similarityScore ?? null,
+      similarity_model_version: null,
       review_notes: params.reviewNotes,
       reviewed_by: mockDb.currentUser.id,
       reviewed_at: new Date().toISOString(),

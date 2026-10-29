@@ -5,6 +5,49 @@ import { notificationService } from './notification.service';
 import { firebaseService } from './firebase.service';
 import { VerificationReport, FinalVerificationStatus } from '@/types';
 
+const hasFile = (r: { media_id?: string; image_url?: string }) => Boolean(r.media_id || r.image_url);
+const latestDate = (dates: (string | null | undefined)[]) =>
+  dates.filter((d): d is string => Boolean(d)).sort().slice(-1)[0]?.slice(0, 10) ?? '';
+
+function compileFindings(applicationId: string, propertyId: string): Record<string, any> {
+  const ground = mockDb.landImages.filter((i) => i.application_id === applicationId);
+  const drone = mockDb.droneImagery.filter((i) => i.application_id === applicationId);
+  const comparison = mockDb.comparisons.find((c) => c.application_id === applicationId);
+  const crop = mockDb.cropVerifications.find((c) => c.application_id === applicationId);
+  const property = mockDb.properties.find((p) => p.id === propertyId);
+  return {
+    ground_photos: ground.filter(hasFile).length,
+    ground_photos_with_gps: ground.filter((i) => hasFile(i) && i.latitude !== null).length,
+    drone_photos: drone.filter(hasFile).length,
+    drone_photos_with_gps: drone.filter((i) => hasFile(i) && i.latitude !== null).length,
+    sample_records_without_files: [...ground, ...drone].filter((i) => !hasFile(i)).length,
+    image_comparison: comparison?.comparison_result ?? 'NOT_RECORDED',
+    image_comparison_notes: comparison?.review_notes ?? null,
+    declared_area: property?.land_area ?? null,
+    declared_crop: crop?.declared_crop_type ?? null,
+    observed_crop: crop?.observed_crop_type ?? null,
+    crop_verification: crop?.verification_result ?? 'NOT_RECORDED',
+    irrigation_verified: crop?.irrigation_method ?? null,
+  };
+}
+
+function compileEvidence(applicationId: string): VerificationReport['supporting_evidence'] {
+  const ground = mockDb.landImages.filter((i) => i.application_id === applicationId && hasFile(i));
+  const drone = mockDb.droneImagery.filter((i) => i.application_id === applicationId && hasFile(i));
+  const comparison = mockDb.comparisons.find((c) => c.application_id === applicationId);
+  const crop = mockDb.cropVerifications.find((c) => c.application_id === applicationId);
+  const evidence: VerificationReport['supporting_evidence'] = [];
+  if (ground.length)
+    evidence.push({ type: 'GROUND_PHOTOS', title: `Farmer ground photographs (${ground.length})`, reference: ground.map((g) => g.id).join(', '), date: latestDate(ground.map((g) => g.capture_timestamp ?? g.uploaded_at)) });
+  if (drone.length)
+    evidence.push({ type: 'DRONE_AERIAL', title: `Drone photographs (${drone.length})`, reference: [...new Set(drone.map((d) => d.mission_reference || d.inspection_id))].join(', '), date: latestDate(drone.map((d) => d.capture_timestamp ?? d.uploaded_at)) });
+  if (comparison)
+    evidence.push({ type: 'IMAGE_COMPARISON', title: `Image comparison: ${comparison.comparison_result}`, reference: comparison.id, date: (comparison.reviewed_at ?? comparison.created_at).slice(0, 10) });
+  if (crop)
+    evidence.push({ type: 'CROP_SURVEY', title: `Crop verification: ${crop.verification_result}`, reference: crop.id, date: crop.verified_at.slice(0, 10) });
+  return evidence;
+}
+
 export class ReportService {
   async getReportByApplicationId(applicationId: string): Promise<VerificationReport | null> {
     const rep = mockDb.reports.find((r) => r.application_id === applicationId);
@@ -58,17 +101,10 @@ export class ReportService {
       application_id: params.applicationId,
       reviewed_by: mockDb.currentUser.id,
       final_status: params.finalStatus,
-      findings: params.findings || {
-        boundaries_verified: true,
-        crop_matching: true,
-        drone_inspection_completed: true,
-      },
-      discrepancies: params.discrepancies || 'No significant discrepancies noted between ground declaration and drone aerial observations.',
-      supporting_evidence: [
-        { type: 'GROUND_PHOTOS', title: 'Farmer Field Ground Photos', reference: 'FLI-SERIES', date: new Date().toISOString().slice(0, 10) },
-        { type: 'DRONE_AERIAL', title: 'Field Worker Drone Photogrammetry', reference: 'DRN-SERIES', date: new Date().toISOString().slice(0, 10) },
-        { type: 'CROP_SURVEY', title: 'Crop Identification Record', reference: 'CROP-VERIF', date: new Date().toISOString().slice(0, 10) },
-      ],
+      // Findings and evidence are compiled from the records that actually exist
+      findings: { ...compileFindings(params.applicationId, params.propertyId), ...(params.findings ?? {}) },
+      discrepancies: params.discrepancies?.trim() || 'None recorded by the reviewer.',
+      supporting_evidence: compileEvidence(params.applicationId),
       report_storage_path: `reports/${reportRef}.pdf`,
       created_at: new Date().toISOString(),
     };

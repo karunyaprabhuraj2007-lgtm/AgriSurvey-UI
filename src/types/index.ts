@@ -193,6 +193,17 @@ export interface FarmerLandImage {
   longitude: number | null;
   metadata_status: string;
   uploaded_at: string;
+  /** Key of the original file in the local media store (IndexedDB) */
+  media_id?: string;
+  /** Cloud download URL of the original file, when uploaded */
+  image_url?: string;
+  /** Where latitude/longitude came from; null coordinates mean the file had no GPS */
+  location_source?: 'EXIF_GPS' | 'NONE';
+  gps_accuracy_m?: number | null;
+  camera_make?: string | null;
+  camera_model?: string | null;
+  /** Seeded demonstration record (stock photo, invented coordinates) — not evidence */
+  is_sample?: boolean;
 }
 
 export interface FieldInspection {
@@ -229,6 +240,20 @@ export interface DroneImagery {
   metadata_status: string;
   processing_status: string;
   uploaded_at: string;
+  /** Key of the original file in the local media store (IndexedDB) */
+  media_id?: string;
+  /** Cloud download URL of the original file, when uploaded */
+  image_url?: string;
+  /** Where latitude/longitude came from; null coordinates mean the file had no GPS */
+  location_source?: 'EXIF_GPS' | 'NONE';
+  gps_accuracy_m?: number | null;
+  camera_make?: string | null;
+  camera_model?: string | null;
+  /** Seeded demonstration record (stock photo, invented coordinates) — not evidence */
+  is_sample?: boolean;
+  /** Height above take-off (DJI XMP), metres */
+  relative_altitude_m?: number | null;
+  rtk_status?: 'FIXED' | 'FLOAT' | 'NONE' | null;
 }
 
 export interface ImageComparison {

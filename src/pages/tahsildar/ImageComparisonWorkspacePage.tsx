@@ -22,91 +22,114 @@ import { Badge } from '@/components/ui/Badge';
 import { cropVerificationService } from '@/services/crop-verification.service';
 import { droneService } from '@/services/drone.service';
 import { mockDb } from '@/services/mock-db';
+import { EvidenceImage } from '@/components/media/EvidenceImage';
+import { hasEvidenceFile } from '@/lib/evidence';
 import { ComparisonResultType, FarmerLandImage, DroneImagery, RegistrationApplication } from '@/types';
 import { useLanguage } from '@/context/LanguageContext';
 import { getTahsildarLabel } from '@/lib/dashboard-localizer';
 
-// Demonstration imagery
-const DEMO_FARMER_IMAGES = [
-  {
-    title: 'Farmer Ground Photo #1 (North Entrance)',
-    url: 'https://images.unsplash.com/photo-1500382017468-9049fed747ef?auto=format&fit=crop&w=1200&q=80',
-    timestamp: '2026-02-15 08:15 IST',
-    coords: '18.5793° N, 73.9823° E',
-  },
-  {
-    title: 'Farmer Ground Photo #2 (Sugarcane Rows)',
-    url: 'https://images.unsplash.com/photo-1592982537447-7440770cbfc9?auto=format&fit=crop&w=1200&q=80',
-    timestamp: '2026-02-15 08:22 IST',
-    coords: '18.5795° N, 73.9826° E',
-  },
-  {
-    title: 'Farmer Ground Photo #3 (Drip Pipes)',
-    url: 'https://images.unsplash.com/photo-1595974482597-4b8da8879bc5?auto=format&fit=crop&w=1200&q=80',
-    timestamp: '2026-02-15 08:30 IST',
-    coords: '18.5794° N, 73.9824° E',
-  },
-];
+const DAY_MS = 24 * 3600 * 1000;
 
-const DEMO_DRONE_IMAGES = [
-  {
-    title: 'Drone RTK Nadir Orthomosaic (DJI_0142)',
-    url: 'https://images.unsplash.com/photo-1500382017468-9049fed747ef?auto=format&fit=crop&w=1200&q=80',
-    timestamp: '2026-02-18 10:25 IST',
-    coords: '18.5793° N, 73.9824° E (RTK ±1.2cm)',
-    mission: 'MISSION-HAV-081',
-  },
-  {
-    title: 'Drone Oblique Canopy Angle (DJI_0143)',
-    url: 'https://images.unsplash.com/photo-1625246333195-78d9c38ad449?auto=format&fit=crop&w=1200&q=80',
-    timestamp: '2026-02-18 10:32 IST',
-    coords: '18.5796° N, 73.9822° E',
-    mission: 'MISSION-HAV-081',
-  },
-  {
-    title: 'Drone Drip Line Survey (DJI_0144)',
-    url: 'https://images.unsplash.com/photo-1595974482597-4b8da8879bc5?auto=format&fit=crop&w=1200&q=80',
-    timestamp: '2026-02-18 10:40 IST',
-    coords: '18.5794° N, 73.9825° E',
-    mission: 'MISSION-HAV-081',
-  },
-];
+/** Great-circle distance in metres between two photo geotags. */
+function distanceM(a: { latitude: number | null; longitude: number | null }, b: { latitude: number | null; longitude: number | null }): number | null {
+  if (a.latitude === null || a.longitude === null || b.latitude === null || b.longitude === null) return null;
+  const toRad = (d: number) => (d * Math.PI) / 180;
+  const dLat = toRad(b.latitude - a.latitude);
+  const dLon = toRad(b.longitude - a.longitude);
+  const h = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(a.latitude)) * Math.cos(toRad(b.latitude)) * Math.sin(dLon / 2) ** 2;
+  return 2 * 6371000 * Math.asin(Math.sqrt(h));
+}
+
+const photoTime = (t: string | null) => (t ? `${t.replace('T', ' ').slice(0, 16)} (camera clock)` : 'Capture time not in file');
+const photoGps = (r: { latitude: number | null; longitude: number | null; rtk_status?: string | null; media_id?: string; image_url?: string }) =>
+  !hasEvidenceFile(r)
+    ? 'Sample record — coordinates not from a photograph'
+    : r.latitude !== null && r.longitude !== null
+    ? `${r.rtk_status === 'FIXED' ? 'RTK' : 'GPS'}: ${r.latitude.toFixed(6)}°, ${r.longitude.toFixed(6)}°`
+    : 'No GPS in file';
 
 export const ImageComparisonWorkspacePage: React.FC = () => {
   const { language } = useLanguage();
   const tl = (key: string) => getTahsildarLabel(key, language);
+
+  // Applications with evidence to compare
+  const applications = mockDb.applications
+    .filter((a) => mockDb.landImages.some((i) => i.application_id === a.id) || mockDb.droneImagery.some((d) => d.application_id === a.id))
+    .map((a) => ({ ...a, property: a.property ?? mockDb.properties.find((p) => p.id === a.property_id), farmer: a.farmer ?? mockDb.profiles.find((p) => p.id === a.farmer_id) }));
+  const [selectedAppId, setSelectedAppId] = useState<string>(applications[0]?.id ?? '');
+  const selectedApp = applications.find((a) => a.id === selectedAppId) ?? null;
+  const [farmerImages, setFarmerImages] = useState<FarmerLandImage[]>([]);
+  const [droneImages, setDroneImages] = useState<DroneImagery[]>([]);
 
   const [selectedFarmerIndex, setSelectedFarmerIndex] = useState(0);
   const [selectedDroneIndex, setSelectedDroneIndex] = useState(0);
   const [zoomLevel, setZoomLevel] = useState(1);
 
   // Verification Checklist State
-  const [checkLandmarks, setCheckLandmarks] = useState(true);
-  const [checkBoundaries, setCheckBoundaries] = useState(true);
-  const [checkSeasonality, setCheckSeasonality] = useState(true);
-  const [checkIrrigation, setCheckIrrigation] = useState(true);
-  const [checkQuality, setCheckQuality] = useState(true);
+  // Unticked until the reviewer has actually checked each item
+  const [checkLandmarks, setCheckLandmarks] = useState(false);
+  const [checkBoundaries, setCheckBoundaries] = useState(false);
+  const [checkSeasonality, setCheckSeasonality] = useState(false);
+  const [checkIrrigation, setCheckIrrigation] = useState(false);
+  const [checkQuality, setCheckQuality] = useState(false);
 
   // Decision State
-  const [comparisonOutcome, setComparisonOutcome] = useState<ComparisonResultType>('CONSISTENT');
-  const [reviewNotes, setReviewNotes] = useState(
-    'Ground photographs of entrance gate and sugarcane stand correspond directly with RTK aerial orthomosaic DJI_0142. Boundary stones and cart-track match revenue survey map.'
-  );
+  const [comparisonOutcome, setComparisonOutcome] = useState<ComparisonResultType | null>(null);
+  const [reviewNotes, setReviewNotes] = useState('');
+  const [saveError, setSaveError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [savedSuccess, setSavedSuccess] = useState(false);
 
-  const activeFarmerImg = DEMO_FARMER_IMAGES[selectedFarmerIndex];
-  const activeDroneImg = DEMO_DRONE_IMAGES[selectedDroneIndex];
+  useEffect(() => {
+    if (!selectedApp) return;
+    let cancelled = false;
+    Promise.all([
+      droneService.getFarmerImages(selectedApp.property_id, selectedApp.id),
+      droneService.getDroneImages(selectedApp.property_id, selectedApp.id),
+    ]).then(([f, d]) => {
+      if (cancelled) return;
+      // Actual photographs first (newest capture first), sample records last
+      const order = <T extends { media_id?: string; image_url?: string; capture_timestamp: string | null }>(list: T[]) =>
+        [...list].sort(
+          (a, b) =>
+            Number(hasEvidenceFile(b)) - Number(hasEvidenceFile(a)) || (b.capture_timestamp ?? '').localeCompare(a.capture_timestamp ?? '')
+        );
+      setFarmerImages(order(f));
+      setDroneImages(order(d));
+      setSelectedFarmerIndex(0);
+      setSelectedDroneIndex(0);
+      const saved = mockDb.comparisons.find((c) => c.application_id === selectedApp.id);
+      setComparisonOutcome(saved?.comparison_result ?? null);
+      setReviewNotes(saved?.review_notes ?? '');
+    });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedAppId]);
+
+  const activeFarmerImg = farmerImages[selectedFarmerIndex] ?? null;
+  const activeDroneImg = droneImages[selectedDroneIndex] ?? null;
+  // Only compare geotags read from actual photograph files
+  const pairIsReal = !!activeFarmerImg && !!activeDroneImg && hasEvidenceFile(activeFarmerImg) && hasEvidenceFile(activeDroneImg);
+  const pairDistance = pairIsReal ? distanceM(activeFarmerImg!, activeDroneImg!) : null;
+  const sampleOnly =
+    [...farmerImages, ...droneImages].length > 0 && [...farmerImages, ...droneImages].every((r) => !r.media_id && !r.image_url);
 
   const handleSaveComparison = async () => {
+    if (!selectedApp || !comparisonOutcome) return;
+    if (!reviewNotes.trim()) {
+      setSaveError('Please record what you compared and observed before saving the finding.');
+      return;
+    }
+    setSaveError(null);
     setIsSaving(true);
     try {
       await cropVerificationService.saveImageComparison({
-        applicationId: 'app-01',
-        propertyId: 'prop-01',
+        applicationId: selectedApp.id,
+        propertyId: selectedApp.property_id,
         comparisonResult: comparisonOutcome,
-        reviewNotes,
-        similarityScore: 93.4,
+        reviewNotes: reviewNotes.trim(),
       });
 
       setIsSaving(false);
@@ -114,7 +137,7 @@ export const ImageComparisonWorkspacePage: React.FC = () => {
       setTimeout(() => setSavedSuccess(false), 3000);
     } catch (err: any) {
       setIsSaving(false);
-      alert(err.message || 'Error recording comparison');
+      setSaveError(err.message || 'Error recording comparison');
     }
   };
 
@@ -132,12 +155,33 @@ export const ImageComparisonWorkspacePage: React.FC = () => {
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <span className="text-xs font-bold text-slate-900">{language === 'mr' ? 'गट क्र.' : 'Survey Gat'} 142/2A • Wagholi</span>
-                <Badge status="EVIDENCE_UPLOADED" size="sm" />
+                {applications.length ? (
+                  <select
+                    value={selectedAppId}
+                    onChange={(e) => setSelectedAppId(e.target.value)}
+                    className="text-xs font-bold text-slate-900 border border-slate-300 rounded-md px-2 py-1 bg-white"
+                    aria-label="Application"
+                  >
+                    {applications.map((a) => (
+                      <option key={a.id} value={a.id}>
+                        {language === 'mr' ? 'गट क्र.' : 'Survey Gat'} {a.property?.survey_number ?? '—'} • {a.property?.village ?? '—'} • {a.application_reference}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <span className="text-xs font-bold text-slate-900">No applications with uploaded evidence</span>
+                )}
+                {selectedApp && <Badge status={selectedApp.status} size="sm" />}
               </div>
-              <p className="text-[11px] text-slate-500 font-mono">
-                App Ref: AGRI-APP-2026-849102 • Ramesh Patil • 3.50 {language === 'mr' ? 'एकर' : language === 'hi' ? 'एकड़' : 'Acres'}
-              </p>
+              {selectedApp && (
+                <p className="text-[11px] text-slate-500 font-mono">
+                  {selectedApp.farmer?.full_name ?? 'Farmer'} • {selectedApp.property?.land_area ?? '—'} {language === 'mr' ? 'एकर' : language === 'hi' ? 'एकड़' : 'Acres'} •{' '}
+                  {farmerImages.filter(hasEvidenceFile).length} ground photo(s) • {droneImages.filter(hasEvidenceFile).length} drone photo(s)
+                  {[...farmerImages, ...droneImages].some((r) => !hasEvidenceFile(r))
+                    ? ` • ${[...farmerImages, ...droneImages].filter((r) => !hasEvidenceFile(r)).length} sample record(s) without files`
+                    : ''}
+                </p>
+              )}
             </div>
           </div>
 
@@ -183,42 +227,33 @@ export const ImageComparisonWorkspacePage: React.FC = () => {
                 </h3>
               </div>
               <span className="text-[11px] font-mono text-emerald-800 font-semibold bg-emerald-50 px-2 py-0.5 rounded">
-                {tl('photoPrefix')} {selectedFarmerIndex + 1} {tl('ofConnector')} {DEMO_FARMER_IMAGES.length}
+                {farmerImages.length ? `${tl('photoPrefix')} ${selectedFarmerIndex + 1} ${tl('ofConnector')} ${farmerImages.length}` : '0'}
               </span>
             </div>
 
             {/* Main Interactive Viewer */}
             <div className="relative rounded-xl overflow-hidden bg-slate-950 h-72 sm:h-96 flex items-center justify-center border border-slate-200 group">
-              <img
-                src={activeFarmerImg.url}
-                alt={activeFarmerImg.title}
-                style={{ transform: `scale(${zoomLevel})` }}
-                className="w-full h-full object-cover transition-transform duration-200"
-              />
-
-              {/* In-view Metadata Overlay */}
-              <div className="absolute top-2 left-2 bg-slate-900/80 backdrop-blur-xs px-2.5 py-1 rounded text-[10px] text-white font-mono space-y-0.5">
-                <div>
-                  {language === 'mr'
-                    ? selectedFarmerIndex === 0
-                      ? 'शेतकऱ्याचा प्रत्यक्ष फोटो #१ (उत्तर प्रवेशद्वार)'
-                      : selectedFarmerIndex === 1
-                      ? 'शेतकऱ्याचा प्रत्यक्ष फोटो #२ (उसाचे चर)'
-                      : 'शेतकऱ्याचा प्रत्यक्ष फोटो #३ (ठिबक नलिका)'
-                    : activeFarmerImg.title}
-                </div>
-                <div className="text-emerald-400">
-                  {language === 'mr' ? 'दिनांक/वेळ:' : language === 'hi' ? 'समय:' : 'Captured:'} {activeFarmerImg.timestamp}
-                </div>
-                <div className="text-slate-300">GPS: {activeFarmerImg.coords}</div>
-              </div>
+              {activeFarmerImg ? (
+                <>
+                  <div style={{ transform: `scale(${zoomLevel})` }} className="w-full h-full transition-transform duration-200">
+                    <EvidenceImage record={activeFarmerImg} className="w-full h-full object-contain" />
+                  </div>
+                  <div className="absolute top-2 left-2 bg-slate-900/80 backdrop-blur-xs px-2.5 py-1 rounded text-[10px] text-white font-mono space-y-0.5">
+                    <div>{activeFarmerImg.original_filename}</div>
+                    <div className="text-emerald-400">{photoTime(activeFarmerImg.capture_timestamp)}</div>
+                    <div className="text-slate-300">{photoGps(activeFarmerImg)}</div>
+                  </div>
+                </>
+              ) : (
+                <p className="text-xs text-slate-400 p-6 text-center">The farmer has not uploaded ground photographs for this application.</p>
+              )}
             </div>
 
             {/* Thumbnail Selector Strip */}
             <div className="flex items-center gap-2 overflow-x-auto pb-1">
-              {DEMO_FARMER_IMAGES.map((img, idx) => (
+              {farmerImages.map((img, idx) => (
                 <button
-                  key={idx}
+                  key={img.id}
                   onClick={() => setSelectedFarmerIndex(idx)}
                   className={`w-20 h-14 rounded-lg overflow-hidden border-2 shrink-0 transition-all ${
                     selectedFarmerIndex === idx
@@ -226,7 +261,7 @@ export const ImageComparisonWorkspacePage: React.FC = () => {
                       : 'border-slate-200 opacity-60 hover:opacity-100'
                   }`}
                 >
-                  <img src={img.url} alt="" className="w-full h-full object-cover" />
+                  <EvidenceImage record={img} className="w-full h-full object-cover" />
                 </button>
               ))}
             </div>
@@ -242,42 +277,36 @@ export const ImageComparisonWorkspacePage: React.FC = () => {
                 </h3>
               </div>
               <span className="text-[11px] font-mono text-cyan-800 font-semibold bg-cyan-50 px-2 py-0.5 rounded">
-                {tl('orthoPrefix')} {selectedDroneIndex + 1} {tl('ofConnector')} {DEMO_DRONE_IMAGES.length}
+                {droneImages.length ? `${tl('orthoPrefix')} ${selectedDroneIndex + 1} ${tl('ofConnector')} ${droneImages.length}` : '0'}
               </span>
             </div>
 
             {/* Main Interactive Viewer */}
             <div className="relative rounded-xl overflow-hidden bg-slate-950 h-72 sm:h-96 flex items-center justify-center border border-slate-200 group">
-              <img
-                src={activeDroneImg.url}
-                alt={activeDroneImg.title}
-                style={{ transform: `scale(${zoomLevel})` }}
-                className="w-full h-full object-cover transition-transform duration-200"
-              />
-
-              {/* In-view Metadata Overlay */}
-              <div className="absolute top-2 left-2 bg-slate-900/80 backdrop-blur-xs px-2.5 py-1 rounded text-[10px] text-white font-mono space-y-0.5">
-                <div>
-                  {language === 'mr'
-                    ? selectedDroneIndex === 0
-                      ? 'ड्रोन RTK नादिर ऑर्थोमोझॅक (DJI_0142)'
-                      : selectedDroneIndex === 1
-                      ? 'ड्रोन तिरपे दृश्य (DJI_0143)'
-                      : 'ड्रोन ठिबक लाईन पाहणी (DJI_0144)'
-                    : activeDroneImg.title}
-                </div>
-                <div className="text-cyan-400">
-                  {language === 'mr' ? 'मोहीम:' : language === 'hi' ? 'मिशन:' : 'Mission:'} {activeDroneImg.mission} • {activeDroneImg.timestamp}
-                </div>
-                <div className="text-slate-300">RTK: {activeDroneImg.coords}</div>
-              </div>
+              {activeDroneImg ? (
+                <>
+                  <div style={{ transform: `scale(${zoomLevel})` }} className="w-full h-full transition-transform duration-200">
+                    <EvidenceImage record={activeDroneImg} className="w-full h-full object-contain" />
+                  </div>
+                  <div className="absolute top-2 left-2 bg-slate-900/80 backdrop-blur-xs px-2.5 py-1 rounded text-[10px] text-white font-mono space-y-0.5">
+                    <div>{activeDroneImg.original_filename}</div>
+                    <div className="text-cyan-400">
+                      {activeDroneImg.mission_reference ? `${activeDroneImg.mission_reference} • ` : ''}
+                      {photoTime(activeDroneImg.capture_timestamp)}
+                    </div>
+                    <div className="text-slate-300">{photoGps(activeDroneImg)}</div>
+                  </div>
+                </>
+              ) : (
+                <p className="text-xs text-slate-400 p-6 text-center">No drone photographs have been uploaded for this application.</p>
+              )}
             </div>
 
             {/* Thumbnail Selector Strip */}
             <div className="flex items-center gap-2 overflow-x-auto pb-1">
-              {DEMO_DRONE_IMAGES.map((img, idx) => (
+              {droneImages.map((img, idx) => (
                 <button
-                  key={idx}
+                  key={img.id}
                   onClick={() => setSelectedDroneIndex(idx)}
                   className={`w-20 h-14 rounded-lg overflow-hidden border-2 shrink-0 transition-all ${
                     selectedDroneIndex === idx
@@ -285,12 +314,39 @@ export const ImageComparisonWorkspacePage: React.FC = () => {
                       : 'border-slate-200 opacity-60 hover:opacity-100'
                   }`}
                 >
-                  <img src={img.url} alt="" className="w-full h-full object-cover" />
+                  <EvidenceImage record={img} className="w-full h-full object-cover" />
                 </button>
               ))}
             </div>
           </Card>
         </div>
+
+        {/* Measured facts about the selected pair (no automated image matching is performed) */}
+        {(activeFarmerImg || activeDroneImg) && (
+          <div className="bg-white rounded-xl border border-slate-200 p-3 text-xs text-slate-700 flex flex-wrap gap-x-6 gap-y-1">
+            <span>
+              <strong>Distance between photo geotags:</strong>{' '}
+              {pairDistance !== null
+                ? `${pairDistance < 1000 ? pairDistance.toFixed(0) + ' m' : (pairDistance / 1000).toFixed(2) + ' km'}`
+                : pairIsReal
+                ? 'Unavailable (a photo has no GPS)'
+                : 'Unavailable (sample record without a photograph)'}
+            </span>
+            <span>
+              <strong>Capture dates apart:</strong>{' '}
+              {pairIsReal && activeFarmerImg?.capture_timestamp && activeDroneImg?.capture_timestamp
+                ? `${Math.round(Math.abs(new Date(activeFarmerImg.capture_timestamp).getTime() - new Date(activeDroneImg.capture_timestamp).getTime()) / DAY_MS)} day(s)`
+                : 'Unavailable'}
+            </span>
+            <span className="text-slate-500">Visual comparison is the reviewer's judgement; no automated similarity score is calculated.</span>
+          </div>
+        )}
+        {sampleOnly && (
+          <p className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-xl p-3">
+            This application only has seeded sample records without photograph files. They are not evidence; ask the farmer and
+            field team to upload original photographs.
+          </p>
+        )}
 
         {/* Verification Checklist & Official Findings Module */}
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
@@ -458,11 +514,7 @@ export const ImageComparisonWorkspacePage: React.FC = () => {
                 </label>
                 <textarea
                   rows={4}
-                  value={
-                    language === 'mr' && reviewNotes.includes('Ground photographs of entrance gate')
-                      ? 'प्रवेशद्वार आणि उसाच्या शेताचे प्रत्यक्ष फोटो RTK हवाई ऑर्थोमोझॅक DJI_0142 शी थेट जुळतात. हद्दीचे दगड आणि पाणंद रस्ता महसूल नकाशाशी तंतोतंत जुळतात.'
-                      : reviewNotes
-                  }
+                  value={reviewNotes}
                   onChange={(e) => setReviewNotes(e.target.value)}
                   className="w-full p-2.5 rounded-lg border border-slate-300 text-xs bg-white text-slate-900"
                   placeholder={tl('tahsildarReviewNotesPlaceholder')}
@@ -486,11 +538,17 @@ export const ImageComparisonWorkspacePage: React.FC = () => {
                 </span>
               ) : (
                 <span className="text-[11px] text-slate-400">
-                  {tl('reviewerLabel')} Anand S. Kulkarni ({language === 'mr' ? 'तहसीलदार' : language === 'hi' ? 'तहसीलदार' : 'Tahsildar'})
+                  {saveError ? (
+                    <span role="alert" className="text-red-700">{saveError}</span>
+                  ) : (
+                    <>
+                      {tl('reviewerLabel')} {mockDb.currentUser.full_name} ({language === 'mr' ? 'तहसीलदार' : language === 'hi' ? 'तहसीलदार' : 'Tahsildar'})
+                    </>
+                  )}
                 </span>
               )}
 
-              <Button onClick={handleSaveComparison} isLoading={isSaving}>
+              <Button onClick={handleSaveComparison} isLoading={isSaving} disabled={!selectedApp || !comparisonOutcome}>
                 {tl('saveComparisonFindingBtn')}
               </Button>
             </div>

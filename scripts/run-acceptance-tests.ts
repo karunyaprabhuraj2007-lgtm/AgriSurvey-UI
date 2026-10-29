@@ -133,12 +133,12 @@ async function runAcceptanceTests() {
     propertyId: regResult.property.id,
     applicationId: regResult.application.id,
     files: [
-      { name: 'photo1.jpg', url: 'https://images.unsplash.com/photo-1', preview: '' },
-      { name: 'photo2.jpg', url: 'https://images.unsplash.com/photo-2', preview: '' },
-      { name: 'photo3.jpg', url: 'https://images.unsplash.com/photo-3', preview: '' },
-      { name: 'photo4.jpg', url: 'https://images.unsplash.com/photo-4', preview: '' },
-      { name: 'photo5.jpg', url: 'https://images.unsplash.com/photo-5', preview: '' },
-      { name: 'photo6.jpg', url: 'https://images.unsplash.com/photo-6', preview: '' },
+      new File([new Uint8Array([0xff, 0xd8, 0xff, 0xd9])], 'photo1.jpg', { type: 'image/jpeg' }),
+      new File([new Uint8Array([0xff, 0xd8, 0xff, 0xd9])], 'photo2.jpg', { type: 'image/jpeg' }),
+      new File([new Uint8Array([0xff, 0xd8, 0xff, 0xd9])], 'photo3.jpg', { type: 'image/jpeg' }),
+      new File([new Uint8Array([0xff, 0xd8, 0xff, 0xd9])], 'photo4.jpg', { type: 'image/jpeg' }),
+      new File([new Uint8Array([0xff, 0xd8, 0xff, 0xd9])], 'photo5.jpg', { type: 'image/jpeg' }),
+      new File([new Uint8Array([0xff, 0xd8, 0xff, 0xd9])], 'photo6.jpg', { type: 'image/jpeg' }),
     ],
   });
   assert(uploadedPhotos.length === 6, '6 farmer ground photographs accepted and stored');
@@ -161,13 +161,13 @@ async function runAcceptanceTests() {
     applicationId: regResult.application.id,
     missionReference: 'MISSION-PUN-DRONE-HAV-085',
     files: [
-      { name: 'dji_ortho_01.jpg', url: 'https://images.unsplash.com/drone-1', preview: '' },
-      { name: 'dji_ortho_02.jpg', url: 'https://images.unsplash.com/drone-2', preview: '' },
-      { name: 'dji_ortho_03.jpg', url: 'https://images.unsplash.com/drone-3', preview: '' },
-      { name: 'dji_ortho_04.jpg', url: 'https://images.unsplash.com/drone-4', preview: '' },
+      new File([new Uint8Array([0xff, 0xd8, 0xff, 0xd9])], 'dji_ortho_01.jpg', { type: 'image/jpeg' }),
+      new File([new Uint8Array([0xff, 0xd8, 0xff, 0xd9])], 'dji_ortho_02.jpg', { type: 'image/jpeg' }),
+      new File([new Uint8Array([0xff, 0xd8, 0xff, 0xd9])], 'dji_ortho_03.jpg', { type: 'image/jpeg' }),
+      new File([new Uint8Array([0xff, 0xd8, 0xff, 0xd9])], 'dji_ortho_04.jpg', { type: 'image/jpeg' }),
     ],
   });
-  assert(droneUploads.length === 4, '4 drone orthomosaics uploaded with RTK mission reference');
+  assert(droneUploads.length === 4, '4 drone photographs uploaded with mission reference');
 
   // Test 7 — Image Comparison Workspace
   console.log('\n--- Test 7: Image Comparison Workspace ---');

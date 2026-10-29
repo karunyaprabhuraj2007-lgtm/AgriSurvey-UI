@@ -21,39 +21,9 @@ import { droneService } from '@/services/drone.service';
 import { mockDb } from '@/services/mock-db';
 import { FarmerLandImage, RegistrationApplication } from '@/types';
 
-// Pre-packaged high-res agricultural demonstration photographs
-const SAMPLE_FARM_IMAGES = [
-  {
-    name: 'north_field_entrance_gate.jpg',
-    url: 'https://images.unsplash.com/photo-1500382017468-9049fed747ef?auto=format&fit=crop&w=800&q=80',
-    caption: 'Viewpoint 1: North boundary marker and field access entrance',
-  },
-  {
-    name: 'sugarcane_canopy_rows.jpg',
-    url: 'https://images.unsplash.com/photo-1592982537447-7440770cbfc9?auto=format&fit=crop&w=800&q=80',
-    caption: 'Viewpoint 2: Sugarcane crop stand height and row spacing',
-  },
-  {
-    name: 'drip_lateral_irrigation_pipes.jpg',
-    url: 'https://images.unsplash.com/photo-1595974482597-4b8da8879bc5?auto=format&fit=crop&w=800&q=80',
-    caption: 'Viewpoint 3: Operational drip irrigation sub-main lateral pipes',
-  },
-  {
-    name: 'east_boundary_hedge_stone.jpg',
-    url: 'https://images.unsplash.com/photo-1625246333195-78d9c38ad449?auto=format&fit=crop&w=800&q=80',
-    caption: 'Viewpoint 4: Eastern boundary stone demarcating revenue plot',
-  },
-  {
-    name: 'solar_pump_borewell_shed.jpg',
-    url: 'https://images.unsplash.com/photo-1589923188900-85dae523342b?auto=format&fit=crop&w=800&q=80',
-    caption: 'Viewpoint 5: Borewell shed and solar irrigation pump setup',
-  },
-  {
-    name: 'southwest_panoramic_landscape.jpg',
-    url: 'https://images.unsplash.com/photo-1560493676-04071c5f467b?auto=format&fit=crop&w=800&q=80',
-    caption: 'Viewpoint 6: Panoramic overview of cultivated sugarcane plot',
-  },
-];
+import { EvidenceImage } from '@/components/media/EvidenceImage';
+import { hasEvidenceFile } from '@/lib/evidence';
+import { PhotoMetadata, locationSourceLabel, readPhotoMetadata } from '@/lib/photo-metadata';
 
 import { useLanguage } from '@/context/LanguageContext';
 import { localizePlotOrCropName } from '@/lib/dashboard-localizer';
@@ -73,9 +43,8 @@ export const LandImageUploadPage: React.FC = () => {
   );
 
   const [existingImages, setExistingImages] = useState<FarmerLandImage[]>([]);
-  const [stagedImages, setStagedImages] = useState<
-    Array<{ name: string; url: string; caption: string }>
-  >([]);
+  const [sampleRecordCount, setSampleRecordCount] = useState(0);
+  const [stagedImages, setStagedImages] = useState<Array<{ file: File; url: string; meta: PhotoMetadata }>>([]);
   const [previewImage, setPreviewImage] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [successNotice, setSuccessNotice] = useState(false);
@@ -89,25 +58,26 @@ export const LandImageUploadPage: React.FC = () => {
 
   const loadImages = async (propId: string, appId: string) => {
     const list = await droneService.getFarmerImages(propId, appId);
-    setExistingImages(list);
-    // If no images yet, stage the recommended sample set for demonstration ease
-    if (list.length === 0 && stagedImages.length === 0) {
-      setStagedImages(SAMPLE_FARM_IMAGES);
-    }
+    // Seeded sample records have no photograph file; they do not count towards the 5–6 photos
+    setExistingImages(list.filter(hasEvidenceFile));
+    setSampleRecordCount(list.filter((i) => !hasEvidenceFile(i)).length);
   };
 
-  const handleAddSample = (index: number) => {
-    if (stagedImages.length >= 6) {
-      setErrorMessage('Maximum 6 land photographs are permitted.');
-      return;
-    }
-    const sample = SAMPLE_FARM_IMAGES[index];
-    setStagedImages([...stagedImages, sample]);
-    setErrorMessage(null);
+  const handleAddPhotos = async (list: FileList | null) => {
+    if (!list?.length) return;
+    const room = 6 - existingImages.length - stagedImages.length;
+    const files = Array.from(list).filter((f) => f.type.startsWith('image/'));
+    if (files.length > room) setErrorMessage('Maximum 6 land photographs are permitted; extra files were not added.');
+    else setErrorMessage(null);
+    const added = await Promise.all(
+      files.slice(0, Math.max(0, room)).map(async (file) => ({ file, url: URL.createObjectURL(file), meta: await readPhotoMetadata(file) }))
+    );
+    setStagedImages((prev) => [...prev, ...added]);
   };
 
   const handleRemoveStaged = (index: number) => {
     const next = [...stagedImages];
+    URL.revokeObjectURL(next[index].url);
     next.splice(index, 1);
     setStagedImages(next);
   };
@@ -130,11 +100,12 @@ export const LandImageUploadPage: React.FC = () => {
       await droneService.uploadFarmerImages({
         propertyId: selectedApp.property_id,
         applicationId: selectedApp.id,
-        files: stagedImages.map((s) => ({ name: s.name, url: s.url, preview: s.url })),
+        files: stagedImages.map((s) => s.file),
       });
 
       setIsSubmitting(false);
       setSuccessNotice(true);
+      stagedImages.forEach((s) => URL.revokeObjectURL(s.url));
       setStagedImages([]);
       loadImages(selectedApp.property_id, selectedApp.id);
     } catch (err: any) {
@@ -240,17 +211,15 @@ export const LandImageUploadPage: React.FC = () => {
               </p>
             </div>
 
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => {
-                setStagedImages(SAMPLE_FARM_IMAGES);
-                setErrorMessage(null);
-              }}
-            >
-              Load Recommended 6 Viewpoints
-            </Button>
+
           </div>
+
+          {sampleRecordCount > 0 && (
+            <p className="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+              {sampleRecordCount} seeded sample record(s) for this application have no photograph file. They are not evidence and
+              do not count towards the 5–6 photographs; please upload your own.
+            </p>
+          )}
 
           {/* Photo Grid Preview */}
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -260,39 +229,26 @@ export const LandImageUploadPage: React.FC = () => {
                 key={img.id}
                 className="group relative rounded-xl overflow-hidden border border-emerald-300 bg-slate-900 shadow-xs"
               >
-                <img
-                  src={
-                    idx < SAMPLE_FARM_IMAGES.length
-                      ? SAMPLE_FARM_IMAGES[idx].url
-                      : 'https://images.unsplash.com/photo-1500382017468-9049fed747ef?auto=format&fit=crop&w=600&q=80'
-                  }
-                  alt={img.original_filename}
+                <EvidenceImage
+                  record={img}
+                  onOpen={setPreviewImage}
                   className="w-full h-44 object-cover group-hover:scale-105 transition-transform duration-300"
                 />
-                <div className="absolute inset-0 bg-gradient-to-t from-slate-950/80 via-transparent to-black/30 p-3 flex flex-col justify-between">
+                <div className="absolute inset-0 pointer-events-none bg-gradient-to-t from-slate-950/80 via-transparent to-black/30 p-3 flex flex-col justify-between">
                   <div className="flex items-center justify-between">
                     <span className="bg-emerald-600/90 backdrop-blur-xs text-white text-[10px] font-bold px-2 py-0.5 rounded">
-                      Verified Photo #{idx + 1}
+                      Submitted Photo #{idx + 1}
                     </span>
-                    <button
-                      onClick={() =>
-                        setPreviewImage(
-                          idx < SAMPLE_FARM_IMAGES.length
-                            ? SAMPLE_FARM_IMAGES[idx].url
-                            : 'https://images.unsplash.com/photo-1500382017468-9049fed747ef?auto=format&fit=crop&w=1200&q=80'
-                        )
-                      }
-                      className="p-1 rounded bg-white/20 text-white hover:bg-white/40"
-                    >
-                      <Eye className="w-3.5 h-3.5" />
-                    </button>
+
                   </div>
                   <div>
                     <div className="text-white text-xs font-semibold truncate">
                       {img.original_filename}
                     </div>
                     <div className="text-[10px] text-emerald-300 font-mono">
-                      GPS: {img.latitude?.toFixed(4)}° N, {img.longitude?.toFixed(4)}° E
+                      {img.latitude !== null && img.longitude !== null
+                        ? `GPS: ${img.latitude.toFixed(6)}°, ${img.longitude.toFixed(6)}°`
+                        : 'No GPS in file'}
                     </div>
                   </div>
                 </div>
@@ -302,12 +258,12 @@ export const LandImageUploadPage: React.FC = () => {
             {/* Staged New Photos */}
             {stagedImages.map((stg, idx) => (
               <div
-                key={stg.name + idx}
+                key={stg.url}
                 className="group relative rounded-xl overflow-hidden border border-slate-200 bg-slate-900 shadow-xs"
               >
                 <img
                   src={stg.url}
-                  alt={stg.name}
+                  alt={stg.file.name}
                   className="w-full h-44 object-cover group-hover:scale-105 transition-transform duration-300"
                 />
                 <div className="absolute inset-0 bg-gradient-to-t from-slate-950/80 via-transparent to-black/30 p-3 flex flex-col justify-between">
@@ -331,8 +287,11 @@ export const LandImageUploadPage: React.FC = () => {
                     </div>
                   </div>
                   <div>
-                    <div className="text-white text-xs font-semibold truncate">{stg.name}</div>
-                    <div className="text-[10px] text-slate-300 truncate">{stg.caption}</div>
+                    <div className="text-white text-xs font-semibold truncate">{stg.file.name}</div>
+                    <div className={`text-[10px] truncate ${stg.meta.latitude === null ? 'text-amber-300' : 'text-emerald-300'}`}>
+                      {locationSourceLabel(stg.meta)}
+                      {stg.meta.capturedAt ? ` · ${stg.meta.capturedAt.replace('T', ' ').slice(0, 16)}` : ' · no capture time'}
+                    </div>
                   </div>
                 </div>
               </div>
@@ -340,8 +299,7 @@ export const LandImageUploadPage: React.FC = () => {
 
             {/* Upload Placeholder if under 6 */}
             {totalImageCount < 6 && (
-              <div
-                onClick={() => handleAddSample(totalImageCount % SAMPLE_FARM_IMAGES.length)}
+              <label
                 className="border-2 border-dashed border-slate-300 hover:border-emerald-500 rounded-xl h-44 flex flex-col items-center justify-center p-4 text-center cursor-pointer bg-slate-50/50 hover:bg-emerald-50/20 transition-all group"
               >
                 <UploadCloud className="w-8 h-8 text-slate-400 group-hover:text-emerald-600 mb-2 transition-colors" />
@@ -349,16 +307,29 @@ export const LandImageUploadPage: React.FC = () => {
                   Add Photo #{totalImageCount + 1}
                 </span>
                 <span className="text-[10px] text-slate-400 mt-1">
-                  Click to attach camera photograph
+                  Take or choose original camera photos (location services on, so GPS is recorded)
                 </span>
-              </div>
+                <input
+                  type="file"
+                  accept="image/*"
+                  capture="environment"
+                  multiple
+                  className="sr-only"
+                  aria-label="Land photographs"
+                  onChange={(e) => {
+                    handleAddPhotos(e.target.files);
+                    e.target.value = '';
+                  }}
+                />
+              </label>
             )}
           </div>
 
           {/* Submission Bar */}
           <div className="pt-4 border-t border-slate-100 flex flex-col sm:flex-row items-center justify-between gap-4">
             <div className="text-xs text-slate-500">
-              Photos are encrypted and stored in private Supabase bucket <code className="font-mono text-[10px] bg-slate-100 px-1 py-0.5 rounded">farmer-images/</code>
+              Original files are kept on this device and uploaded to cloud storage when it is configured. GPS and
+              capture time are read from each photo; nothing is filled in when a tag is missing.
             </div>
 
             <Button
@@ -379,7 +350,7 @@ export const LandImageUploadPage: React.FC = () => {
           <div className="space-y-3">
             <img src={previewImage} alt="Preview" className="w-full h-auto rounded-lg max-h-[70vh] object-contain mx-auto" />
             <div className="text-center text-xs text-slate-500">
-              High-resolution photo representation stored with GPS coordinates and timestamp
+              Original photograph
             </div>
           </div>
         )}

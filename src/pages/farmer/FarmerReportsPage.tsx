@@ -218,15 +218,15 @@ export const FarmerReportsPage: React.FC = () => {
                       <div className="bg-slate-50 rounded-xl p-3.5 border border-slate-200 space-y-1.5">
                         <div className="flex justify-between">
                           <span className="text-slate-500">Declared Area:</span>
-                          <span className="font-semibold text-slate-800">{report.findings?.declared_area || prop?.land_area || 3.5} Acres</span>
+                          <span className="font-semibold text-slate-800">{report.findings?.declared_area ?? prop?.land_area ?? '—'} Acres</span>
                         </div>
                         <div className="flex justify-between">
                           <span className="text-slate-500">Measured UAV Area:</span>
-                          <span className="font-semibold text-emerald-700">{report.findings?.measured_area || 3.48} Acres</span>
+                          <span className="font-semibold text-emerald-700">{report.findings?.measured_area != null ? `${report.findings.measured_area} Acres` : 'Not measured'}</span>
                         </div>
                         <div className="flex justify-between pt-1 border-t border-slate-200">
                           <span className="text-slate-500">Boundary Discrepancy:</span>
-                          <span className="font-semibold text-slate-800">{report.findings?.boundary_discrepancy_meters || 0.4} meters (Hedge margin)</span>
+                          <span className="font-semibold text-slate-800">{report.findings?.boundary_discrepancy_meters != null ? `${report.findings.boundary_discrepancy_meters} meters` : 'Not measured'}</span>
                         </div>
                       </div>
                     </div>
@@ -239,15 +239,15 @@ export const FarmerReportsPage: React.FC = () => {
                       <div className="bg-slate-50 rounded-xl p-3.5 border border-slate-200 space-y-1.5">
                         <div className="flex justify-between">
                           <span className="text-slate-500">Declared Crop:</span>
-                          <span className="font-semibold text-slate-800">{report.findings?.declared_crop || 'Sugarcane (ऊस)'}</span>
+                          <span className="font-semibold text-slate-800">{report.findings?.declared_crop ?? 'Not recorded'}</span>
                         </div>
                         <div className="flex justify-between">
                           <span className="text-slate-500">Observed Crop Stand:</span>
-                          <span className="font-semibold text-emerald-700">{report.findings?.observed_crop || 'Sugarcane (ऊस)'}</span>
+                          <span className="font-semibold text-emerald-700">{report.findings?.observed_crop ?? 'Not recorded'}</span>
                         </div>
                         <div className="flex justify-between pt-1 border-t border-slate-200">
                           <span className="text-slate-500">Irrigation Setup:</span>
-                          <span className="font-semibold text-slate-800">{report.findings?.irrigation_verified || 'Operational Drip System'}</span>
+                          <span className="font-semibold text-slate-800">{report.findings?.irrigation_verified ?? 'Not recorded'}</span>
                         </div>
                       </div>
                     </div>
@@ -282,7 +282,7 @@ export const FarmerReportsPage: React.FC = () => {
                     <div className="flex items-center gap-2 shrink-0">
                       <span className="text-slate-400 text-[11px]">Supporting Evidence:</span>
                       <span className="px-2 py-0.5 rounded bg-slate-100 text-slate-700 font-mono text-[10px]">
-                        {report.supporting_evidence?.length || 4} verified items
+                        {report.supporting_evidence?.length ?? 0} evidence item(s)
                       </span>
                     </div>
                   </div>
