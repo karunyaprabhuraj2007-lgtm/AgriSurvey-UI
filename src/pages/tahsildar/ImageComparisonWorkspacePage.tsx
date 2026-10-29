@@ -24,6 +24,11 @@ import { droneService } from '@/services/drone.service';
 import { mockDb } from '@/services/mock-db';
 import { EvidenceImage } from '@/components/media/EvidenceImage';
 import { hasEvidenceFile } from '@/lib/evidence';
+import { CircleMarker, Tooltip } from 'react-leaflet';
+import { HighResFieldMap } from '@/components/satellite/HighResFieldMap';
+import { LatestSentinelPanel } from '@/components/satellite/LatestSentinelPanel';
+import { SurveyArea, surveyAreaCenter } from '@/lib/sentinel-cog';
+import { fieldOutline } from '@/services/field-surveillance.service';
 import { ComparisonResultType, FarmerLandImage, DroneImagery, RegistrationApplication } from '@/types';
 import { useLanguage } from '@/context/LanguageContext';
 import { getTahsildarLabel } from '@/lib/dashboard-localizer';
@@ -107,6 +112,19 @@ export const ImageComparisonWorkspacePage: React.FC = () => {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedAppId]);
+
+  // Satellite reference for the selected property: registered plot boundary, else 100 m around its coordinates
+  const plot = selectedApp ? mockDb.farmPlots.find((p) => p.property_id === selectedApp.property_id) : undefined;
+  const satelliteArea: SurveyArea | null =
+    plot && plot.boundary_coordinates.length >= 3
+      ? { kind: 'polygon', coordinates: plot.boundary_coordinates }
+      : selectedApp?.property?.latitude != null && selectedApp.property.longitude != null
+      ? { kind: 'circle', center: { lat: selectedApp.property.latitude, lon: selectedApp.property.longitude }, radiusKm: 0.1 }
+      : null;
+  const geotaggedPhotos = [
+    ...farmerImages.filter((i) => hasEvidenceFile(i) && i.latitude !== null).map((i) => ({ r: i, kind: 'Farmer photo' as const })),
+    ...droneImages.filter((i) => hasEvidenceFile(i) && i.latitude !== null).map((i) => ({ r: i, kind: 'Drone photo' as const })),
+  ];
 
   const activeFarmerImg = farmerImages[selectedFarmerIndex] ?? null;
   const activeDroneImg = droneImages[selectedDroneIndex] ?? null;
@@ -214,6 +232,57 @@ export const ImageComparisonWorkspacePage: React.FC = () => {
             </button>
           </div>
         </div>
+
+        {/* Real satellite imagery of the property (independent of uploaded photos) */}
+        {selectedApp && (
+          <Card className="p-5 space-y-3">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1 border-b border-slate-100 pb-3">
+              <h3 className="text-xs font-bold uppercase tracking-wider text-slate-900 flex items-center gap-2">
+                <span className="w-2.5 h-2.5 rounded-full bg-indigo-600" />
+                Satellite imagery of this property
+              </h3>
+              <span className="text-[11px] text-slate-500">
+                {plot ? `Plot ${plot.plot_reference} boundary` : 'Registered property coordinates (100 m radius)'} · every image is dated
+              </span>
+            </div>
+            {satelliteArea ? (
+              <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
+                <div className="lg:col-span-5">
+                  <LatestSentinelPanel area={satelliteArea} />
+                </div>
+                <div className="lg:col-span-7">
+                  <HighResFieldMap
+                    center={surveyAreaCenter(satelliteArea)}
+                    outline={fieldOutline(satelliteArea)}
+                    heightClass="h-[440px]"
+                    allowDroneUpload
+                  >
+                    {geotaggedPhotos.map(({ r, kind }) => (
+                      <CircleMarker
+                        key={r.id}
+                        center={[r.latitude!, r.longitude!]}
+                        radius={6}
+                        pathOptions={{ color: kind === 'Farmer photo' ? '#10b981' : '#06b6d4', weight: 2, fillOpacity: 0.9 }}
+                      >
+                        <Tooltip>
+                          {kind}: {r.original_filename}
+                          {r.capture_timestamp ? ` · ${r.capture_timestamp.replace('T', ' ').slice(0, 16)}` : ''}
+                        </Tooltip>
+                      </CircleMarker>
+                    ))}
+                  </HighResFieldMap>
+                  {geotaggedPhotos.length > 0 && (
+                    <p className="text-[10px] text-slate-500 mt-1">
+                      Dots mark where each uploaded photo was taken (green = farmer, blue = drone), from the photo's own GPS tag.
+                    </p>
+                  )}
+                </div>
+              </div>
+            ) : (
+              <p className="text-xs text-slate-500">This property has no registered coordinates or plot boundary, so no satellite view can be shown.</p>
+            )}
+          </Card>
+        )}
 
         {/* Dual-Pane Side-by-Side Viewing Workspace (Section 14 Requirement) */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
