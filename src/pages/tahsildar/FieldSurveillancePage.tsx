@@ -29,7 +29,7 @@ import {
   CheckCircle2,
   CloudOff,
 } from 'lucide-react';
-import { MapContainer, TileLayer, Polygon, ImageOverlay, CircleMarker, useMap, useMapEvents } from 'react-leaflet';
+import { Polygon, CircleMarker, useMapEvents } from 'react-leaflet';
 import { LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid, Legend, ResponsiveContainer, ReferenceLine } from 'recharts';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { mockDb } from '@/services/mock-db';
@@ -52,7 +52,8 @@ import {
   runSurveillance,
   saveField,
 } from '@/services/field-surveillance.service';
-import { ClipImageMode, NDVI_CLASSES, NDVI_MASKED_COLOR, SurveyArea, clipUrl } from '@/lib/sentinel-cog';
+import { ClipImageMode, NDVI_CLASSES, NDVI_MASKED_COLOR, SurveyArea, clipUrl, surveyAreaCenter } from '@/lib/sentinel-cog';
+import { HighResFieldMap } from '@/components/satellite/HighResFieldMap';
 import { SceneClipImage } from '@/components/satellite/SceneClipImage';
 
 type AreaMode = 'plot' | 'point' | 'draw';
@@ -64,16 +65,6 @@ const rgb = (c: [number, number, number]) => `rgb(${c[0]}, ${c[1]}, ${c[2]})`;
 const fmt = (v: number | null | undefined, d = 2) => (v === null || v === undefined ? '—' : v.toFixed(d));
 const shortDate = (iso: string) =>
   new Date(`${iso.slice(0, 10)}T00:00:00Z`).toLocaleDateString(undefined, { day: '2-digit', month: 'short', timeZone: 'UTC' });
-
-const FitToArea: React.FC<{ outline: [number, number][] | null }> = ({ outline }) => {
-  const map = useMap();
-  const key = outline ? outline.map((p) => p.join(',')).join(';') : '';
-  useEffect(() => {
-    if (outline && outline.length > 1) map.fitBounds(outline, { padding: [30, 30], maxZoom: 17 });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [key, map]);
-  return null;
-};
 
 const DrawClicks: React.FC<{ enabled: boolean; onAdd: (p: [number, number]) => void }> = ({ enabled, onAdd }) => {
   useMapEvents({
@@ -141,7 +132,6 @@ export const FieldSurveillancePage: React.FC = () => {
   const [runError, setRunError] = useState<string | null>(null);
   const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
   const [imageMode, setImageMode] = useState<ImageMode>('visual');
-  const [overlayOpacity, setOverlayOpacity] = useState(0.8);
   const abortRef = useRef<AbortController | null>(null);
 
   useEffect(() => () => abortRef.current?.abort(), []);
@@ -269,6 +259,12 @@ export const FieldSurveillancePage: React.FC = () => {
   );
 
   const mapOutline = activeField ? fieldOutline(activeField.area) : draftArea ? fieldOutline(draftArea) : null;
+  const isDrawing = mode === 'draw' && !activeField;
+  const mapCenter = activeField
+    ? surveyAreaCenter(activeField.area)
+    : draftArea && !isDrawing
+    ? surveyAreaCenter(draftArea)
+    : { lat: Number.isFinite(parseFloat(lat)) ? parseFloat(lat) : 18.4633, lon: Number.isFinite(parseFloat(lon)) ? parseFloat(lon) : 74.5804 };
   const overlayClip = selected?.clip;
 
   const downloadPdf = () => {
@@ -447,51 +443,36 @@ export const FieldSurveillancePage: React.FC = () => {
           </form>
 
           <div className="xl:col-span-7 bg-white rounded-2xl border border-slate-200 shadow-xs p-3 space-y-2">
-            <div className="flex items-center justify-between gap-2 px-1">
-              <span className="text-xs font-bold text-slate-800">
-                {mode === 'draw' && !activeField ? 'Click on the map to outline the field' : 'Field location'}
-              </span>
-              {overlayClip && (
-                <label className="flex items-center gap-1.5 text-[11px] text-slate-500">
-                  Sentinel-2 overlay ({selected?.scene?.acquisition_datetime.slice(0, 10)})
-                  <input type="range" min={0} max={1} step={0.05} value={overlayOpacity} onChange={(e) => setOverlayOpacity(parseFloat(e.target.value))} className="w-24 accent-emerald-600" aria-label="Overlay opacity" />
-                </label>
+            <span className="block text-xs font-bold text-slate-800 px-1">
+              {isDrawing ? 'Zoom in and click the field corners on the map' : 'Field imagery'}
+            </span>
+            <HighResFieldMap
+              center={mapCenter}
+              outline={isDrawing ? undefined : mapOutline ?? undefined}
+              sentinelOverlay={
+                overlayClip && selected?.scene
+                  ? { url: clipUrl(overlayClip, imageMode), bounds: overlayClip.bounds, label: selected.scene.acquisition_datetime.slice(0, 10) }
+                  : undefined
+              }
+              allowDroneUpload
+            >
+              <DrawClicks enabled={isDrawing} onAdd={(p) => setDrawPoints((prev) => [...prev, p])} />
+              {isDrawing && drawPoints.length > 1 && (
+                <Polygon positions={drawPoints} pathOptions={{ color: '#facc15', weight: 2, fill: false, dashArray: '4 4' }} />
               )}
-            </div>
-            <div className="h-[420px] rounded-xl overflow-hidden border border-slate-200 isolate">
-              <MapContainer center={[18.4633, 74.5804]} zoom={14} style={{ height: '100%', width: '100%' }} scrollWheelZoom>
-                <TileLayer
-                  attribution='Basemap &copy; <a href="https://www.esri.com/">Esri World Imagery</a> (undated reference)'
-                  url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
-                  maxZoom={19}
-                />
-                <FitToArea outline={mapOutline} />
-                <DrawClicks enabled={mode === 'draw'} onAdd={(p) => setDrawPoints((prev) => [...prev, p])} />
-                {overlayClip && (
-                  <ImageOverlay
-                    url={clipUrl(overlayClip, imageMode)}
-                    bounds={[[overlayClip.bounds.minLat, overlayClip.bounds.minLon], [overlayClip.bounds.maxLat, overlayClip.bounds.maxLon]]}
-                    opacity={overlayOpacity}
-                  />
-                )}
-                {mapOutline && <Polygon positions={mapOutline} pathOptions={{ color: '#facc15', weight: 2, fill: false }} />}
-                {mode === 'draw' && !activeField &&
-                  drawPoints.map((p, i) => <CircleMarker key={i} center={p} radius={4} pathOptions={{ color: '#facc15', fillOpacity: 1 }} />)}
-              </MapContainer>
-            </div>
-            <p className="text-[10px] text-slate-500 px-1">
-              The sharp basemap is an undated visual reference for locating the field. All analysis uses dated Sentinel-2 passes (10 m), shown as the overlay.
-            </p>
+              {isDrawing && drawPoints.map((p, i) => <CircleMarker key={i} center={p} radius={4} pathOptions={{ color: '#facc15', fillOpacity: 1 }} />)}
+            </HighResFieldMap>
           </div>
         </div>
 
-        {/* What satellite imagery can and cannot show */}
+        {/* What each imagery source can and cannot show */}
         <div className="text-xs text-sky-900 bg-sky-50 border border-sky-200 rounded-xl p-3 flex gap-2">
           <Info className="w-4 h-4 shrink-0 mt-0.5" />
           <span>
-            Free satellite imagery (Sentinel-2) shows 10 m × 10 m per pixel: it measures crop canopy greenness, growth and moisture every few
-            days, but it cannot show individual plants or let you recognise a crop species by eye. The crop type below is inferred from the
-            season's growth pattern and must be confirmed with a field survey or drone imagery.
+            <strong>Three real imagery sources, each dated.</strong> Sub-metre satellite captures (map above) are the sharpest satellite view
+            but are updated irregularly. Sentinel-2 (10 m, every ~5 days) is used for the 15-day growth record below because it is frequent
+            and calibrated, but it shows canopy greenness, not individual plants. Individual plants and crop species are only visible in a
+            drone orthomosaic (1–5 cm) or field photographs; the crop type below is inferred from the growth pattern and must be confirmed.
           </span>
         </div>
 

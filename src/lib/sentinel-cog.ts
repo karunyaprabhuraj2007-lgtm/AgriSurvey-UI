@@ -123,6 +123,30 @@ export function lonLatToUtm(lon: number, lat: number, zone: number, south: boole
   return [easting, northing];
 }
 
+const BETA = [
+  N / 2 - (2 * N * N) / 3 + (37 * N ** 3) / 96,
+  (N * N) / 48 + (N ** 3) / 15,
+  (17 * N ** 3) / 480,
+];
+const DELTA = [2 * N - (2 * N * N) / 3 - 2 * N ** 3, (7 * N * N) / 3 - (8 * N ** 3) / 5, (56 * N ** 3) / 15];
+
+/** UTM -> WGS84 (inverse Krüger series). Returns [lon, lat] in degrees. */
+export function utmToLonLat(easting: number, northing: number, zone: number, south: boolean): [number, number] {
+  const xi = (northing - (south ? 10000000 : 0)) / (UTM_K0 * A_RECT);
+  const eta = (easting - 500000) / (UTM_K0 * A_RECT);
+  let xiP = xi;
+  let etaP = eta;
+  for (let j = 1; j <= 3; j++) {
+    xiP -= BETA[j - 1] * Math.sin(2 * j * xi) * Math.cosh(2 * j * eta);
+    etaP -= BETA[j - 1] * Math.cos(2 * j * xi) * Math.sinh(2 * j * eta);
+  }
+  const chi = Math.asin(Math.sin(xiP) / Math.cosh(etaP));
+  let phi = chi;
+  for (let j = 1; j <= 3; j++) phi += DELTA[j - 1] * Math.sin(2 * j * chi);
+  const lon = zone * 6 - 183 + (Math.atan2(Math.sinh(etaP), Math.cos(xiP)) * 180) / Math.PI;
+  return [lon, (phi * 180) / Math.PI];
+}
+
 // ---------------------------------------------------------------------------
 // AOI helpers
 // ---------------------------------------------------------------------------

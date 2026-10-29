@@ -35,7 +35,9 @@ import {
   MonitoringPeriodObservation,
 } from '@/types';
 import { mockDb } from '@/services/mock-db';
-import { loadAreaClip, SceneClip, SurveyArea } from '@/lib/sentinel-cog';
+import { clipUrl, loadAreaClip, SceneClip, SurveyArea } from '@/lib/sentinel-cog';
+import { fieldOutline } from '@/services/field-surveillance.service';
+import { HighResFieldMap } from './HighResFieldMap';
 import { ClipImageMode, SceneClipImage } from './SceneClipImage';
 
 const fmtIndex = (v: number | null | undefined, d = 3) =>
@@ -680,6 +682,26 @@ export const ContinuousMonitoringTimeline: React.FC<ContinuousMonitoringTimeline
           })}
         </div>
       </div>
+
+      {/* Sharpest real satellite view of the farm */}
+      {!isSample && (
+        <div className="bg-white rounded-xl p-4 border border-slate-200 shadow-xs space-y-2">
+          <h3 className="text-sm font-bold text-slate-800 flex items-center gap-2">
+            <Eye className="w-4 h-4 text-emerald-600" /> Sharpest satellite view of this farm
+          </h3>
+          <HighResFieldMap
+            center={{ lat: area.latitude, lon: area.longitude }}
+            outline={fieldOutline(areaGeometry(area))}
+            heightClass="h-[380px]"
+            sentinelOverlay={
+              activeClip?.clip && selectedObs
+                ? { url: clipUrl(activeClip.clip, imageMode), bounds: activeClip.clip.bounds, label: selectedObs.actual_acquisition_dates[0] }
+                : undefined
+            }
+            allowDroneUpload
+          />
+        </div>
+      )}
 
       {/* Selected Observation Deep-Dive & ML Phenology Card */}
       {selectedObs && (

@@ -25,7 +25,9 @@ import {
   Maximize2,
   Info,
 } from 'lucide-react';
-import { MapContainer, TileLayer, ImageOverlay, Circle, CircleMarker } from 'react-leaflet';
+import { CircleMarker } from 'react-leaflet';
+import { HighResFieldMap } from './HighResFieldMap';
+import { fieldOutline } from '@/services/field-surveillance.service';
 import { SatelliteScene } from '@/types';
 import { stacSatelliteService, StacSearchResult } from '@/services/stac.service';
 import { satelliteMonitoringService } from '@/services/satellite-monitoring.service';
@@ -103,7 +105,6 @@ const TahsildarSatelliteCoordinateModalContent: React.FC<TahsildarSatelliteCoord
   const [selectedScene, setSelectedScene] = useState<SatelliteScene | null>(null);
   const [imageryMode, setImageryMode] = useState<ImageryMode>('visual');
   const [isExpanded, setIsExpanded] = useState<boolean>(false);
-  const [overlayOpacity, setOverlayOpacity] = useState<number>(0.85);
 
   // Clipped 10 m imagery for the selected scene
   const [clip, setClip] = useState<SceneClip | null>(null);
@@ -771,67 +772,31 @@ const TahsildarSatelliteCoordinateModalContent: React.FC<TahsildarSatelliteCoord
                       )}
                     </div>
 
-                    {/* High-resolution reference basemap with the Sentinel-2 clip overlaid */}
-                    <div className="bg-white p-3 rounded-xl border border-slate-200 shadow-xs space-y-2">
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="text-xs font-bold text-slate-800">Location check on reference basemap</span>
-                        {activeImageUrl && (
-                          <label className="flex items-center gap-1.5 text-[10px] text-slate-500">
-                            Overlay
-                            <input
-                              type="range"
-                              min="0"
-                              max="1"
-                              step="0.05"
-                              value={overlayOpacity}
-                              onChange={(e) => setOverlayOpacity(parseFloat(e.target.value))}
-                              className="w-20 accent-emerald-600"
-                              aria-label="Sentinel-2 overlay opacity"
-                            />
-                          </label>
-                        )}
-                      </div>
-                      <div className="h-56 rounded-lg overflow-hidden border border-slate-200">
-                        <MapContainer
-                          key={`${searchedArea.lat},${searchedArea.lon},${searchedArea.radiusKm}`}
-                          bounds={activeClip ? [[activeClip.bounds.minLat, activeClip.bounds.minLon], [activeClip.bounds.maxLat, activeClip.bounds.maxLon]] : undefined}
-                          center={activeClip ? undefined : [searchedArea.lat, searchedArea.lon]}
-                          zoom={activeClip ? undefined : 14}
-                          scrollWheelZoom={false}
-                          style={{ height: '100%', width: '100%' }}
-                        >
-                          <TileLayer
-                            attribution='Basemap &copy; <a href="https://www.esri.com/">Esri World Imagery</a> (undated reference)'
-                            url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
-                            maxZoom={19}
-                          />
-                          {activeClip && activeImageUrl && (
-                            <ImageOverlay
-                              url={activeImageUrl}
-                              bounds={[[activeClip.bounds.minLat, activeClip.bounds.minLon], [activeClip.bounds.maxLat, activeClip.bounds.maxLon]]}
-                              opacity={overlayOpacity}
-                            />
-                          )}
-                          <Circle
-                            center={[searchedArea.lat, searchedArea.lon]}
-                            radius={searchedArea.radiusKm * 1000}
-                            pathOptions={{ color: '#ffffff', weight: 1.5, dashArray: '4 4', fill: false }}
-                          />
-                          <CircleMarker
-                            center={[searchedArea.lat, searchedArea.lon]}
-                            radius={5}
-                            pathOptions={{ color: '#facc15', weight: 2, fillOpacity: 0.9 }}
-                          />
-                        </MapContainer>
-                      </div>
-                      <p className="text-[10px] text-slate-500 leading-snug">
-                        The sharper basemap is an undated visual reference only (not analytical data); the overlay is the
-                        Sentinel-2 pass acquired {selectedScene.acquisition_datetime.slice(0, 10)}.
-                      </p>
-                    </div>
                   </div>
                 </div>
               ) : null}
+
+              {/* Sharpest real imagery of the searched location */}
+              {selectedScene && (
+                <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-xs space-y-2">
+                  <h4 className="text-xs font-bold text-slate-800 uppercase tracking-wider flex items-center gap-1.5">
+                    <Satellite className="w-3.5 h-3.5 text-emerald-600" />
+                    High-resolution satellite view (zoom in to field level)
+                  </h4>
+                  <HighResFieldMap
+                    center={{ lat: searchedArea.lat, lon: searchedArea.lon }}
+                    outline={fieldOutline({ kind: 'circle', center: { lat: searchedArea.lat, lon: searchedArea.lon }, radiusKm: searchedArea.radiusKm })}
+                    heightClass="h-[460px]"
+                    sentinelOverlay={
+                      activeClip && activeImageUrl
+                        ? { url: activeImageUrl, bounds: activeClip.bounds, label: selectedScene.acquisition_datetime.slice(0, 10) }
+                        : undefined
+                    }
+                  >
+                    <CircleMarker center={[searchedArea.lat, searchedArea.lon]} radius={5} pathOptions={{ color: '#facc15', weight: 2, fillOpacity: 0.9 }} />
+                  </HighResFieldMap>
+                </div>
+              )}
 
               {/* Gallery of all scenes found in date range */}
               {searchResults.scenes.length > 0 && (
