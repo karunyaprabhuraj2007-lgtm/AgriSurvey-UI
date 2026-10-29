@@ -596,6 +596,9 @@ export interface SatelliteSceneAsset {
   type?: string;
   roles?: string[];
   gsd?: number;
+  /** raster:bands scale/offset converting DN to surface reflectance */
+  scale?: number;
+  offset?: number;
 }
 
 export interface SatelliteScene {
@@ -619,6 +622,14 @@ export interface SatelliteScene {
     visual?: SatelliteSceneAsset;
   };
   intersects_plot?: boolean;
+  /** Projection of the band rasters (e.g. 32643 for UTM 43N) */
+  proj_epsg?: number;
+  /** Sentinel-2 processing baseline, e.g. "05.10" */
+  processing_baseline?: string;
+  /** Whether the -1000 DN BOA offset was already removed from the COGs */
+  boa_offset_applied?: boolean;
+  /** MGRS tile, e.g. "43QDV" */
+  mgrs_tile?: string;
   created_at: string;
 }
 
