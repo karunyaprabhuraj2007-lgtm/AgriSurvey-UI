@@ -16,6 +16,7 @@ import {
   Sprout,
   RefreshCw,
 } from 'lucide-react';
+import { useLocation } from 'react-router-dom';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
@@ -66,6 +67,9 @@ import { useLanguage } from '@/context/LanguageContext';
 
 export const FieldWorkerDashboardPage: React.FC = () => {
   const { t } = useLanguage();
+  const { pathname } = useLocation();
+  // Sidebar links: /inspections = still open, /completed = done, /drone-upload = opens upload dialog
+  const listView = pathname.endsWith('/completed') ? 'completed' : pathname.endsWith('/inspections') ? 'active' : 'all';
   const worker = mockDb.currentUser;
   const [inspections, setInspections] = useState<FieldInspection[]>([]);
   const [selectedInspection, setSelectedInspection] = useState<FieldInspection | null>(null);
@@ -161,6 +165,20 @@ export const FieldWorkerDashboardPage: React.FC = () => {
     }
   };
 
+  const isInspectionDone = (i: FieldInspection) =>
+    i.inspection_status === 'COMPLETED' || i.inspection_status === 'SUBMITTED_FOR_REVIEW';
+  const visibleInspections =
+    listView === 'completed'
+      ? inspections.filter(isInspectionDone)
+      : listView === 'active'
+      ? inspections.filter((i) => !isInspectionDone(i))
+      : inspections;
+
+  const hasSelectedInspection = !!selectedInspection;
+  useEffect(() => {
+    if (pathname.endsWith('/drone-upload') && hasSelectedInspection) setDroneUploadModal(true);
+  }, [pathname, hasSelectedInspection]);
+
   const totalAssigned = inspections.length;
   const inProgressCount = inspections.filter((i) => i.inspection_status === 'IN_PROGRESS').length;
   const completedCount = inspections.filter(
@@ -200,10 +218,21 @@ export const FieldWorkerDashboardPage: React.FC = () => {
           {/* Assigned Inspections List (5 Cols) */}
           <div className="lg:col-span-5 space-y-4">
             <h3 className="text-xs font-bold text-slate-900 uppercase tracking-wider">
-              Assigned Field Inspections ({inspections.length})
+              {listView === 'completed'
+                ? 'Completed Surveys'
+                : listView === 'active'
+                ? 'Open Field Inspections'
+                : 'Assigned Field Inspections'}{' '}
+              ({visibleInspections.length})
             </h3>
 
-            {inspections.map((insp) => {
+            {visibleInspections.length === 0 && (
+              <div className="bg-white rounded-xl border border-dashed border-slate-300 p-6 text-center text-xs text-slate-500">
+                {listView === 'completed' ? 'No completed surveys yet.' : 'No inspections in this list.'}
+              </div>
+            )}
+
+            {visibleInspections.map((insp) => {
               const isSelected = selectedInspection?.id === insp.id;
               const prop = insp.property;
               const app = insp.application;

@@ -33,6 +33,7 @@ import {
   Pie,
   Cell,
 } from 'recharts';
+import { useLocation } from 'react-router-dom';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
@@ -45,8 +46,25 @@ import { mockDb } from '@/services/mock-db';
 import { Profile, AuditLog, StaffRegion, NotificationJob, CropHealthThreshold } from '@/types';
 import { PUNE_TALUKS, MAHARASHTRA_DISTRICTS } from '@/lib/constants';
 
+type AdminTab = 'overview' | 'users' | 'regions' | 'audit' | 'sms' | 'thresholds';
+
+// Sidebar links point at /admin/<section>; open the matching tab for each.
+const tabForPath = (pathname: string): AdminTab => {
+  if (pathname.startsWith('/admin/users')) return 'users';
+  if (pathname.startsWith('/admin/regions')) return 'regions';
+  if (pathname.startsWith('/admin/audit-logs')) return 'audit';
+  if (pathname.startsWith('/admin/settings')) return 'thresholds';
+  return 'overview';
+};
+
 export const AdminDashboardPage: React.FC = () => {
-  const [activeTab, setActiveTab] = useState<'overview' | 'users' | 'regions' | 'audit' | 'sms' | 'thresholds'>('overview');
+  const { pathname } = useLocation();
+  const [activeTab, setActiveTab] = useState<AdminTab>(() => tabForPath(pathname));
+  const [tabPath, setTabPath] = useState(pathname);
+  if (tabPath !== pathname) {
+    setTabPath(pathname);
+    setActiveTab(tabForPath(pathname));
+  }
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [timelineData, setTimelineData] = useState<any[]>([]);
   const [districtData, setDistrictData] = useState<any[]>([]);
@@ -161,7 +179,7 @@ export const AdminDashboardPage: React.FC = () => {
             return (
               <button
                 key={tab.id}
-                onClick={() => setActiveTab(tab.id as any)}
+                onClick={() => setActiveTab(tab.id as AdminTab)}
                 className={`py-3.5 px-4 text-xs font-semibold border-b-2 flex items-center gap-2 transition-all ${
                   isActive
                     ? 'border-emerald-600 text-emerald-800'
