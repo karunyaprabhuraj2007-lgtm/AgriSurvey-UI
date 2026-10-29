@@ -32,13 +32,12 @@ interface MobileFieldSurveyModalProps {
   onSurveySubmitted?: () => void;
 }
 
-export const MobileFieldSurveyModal: React.FC<MobileFieldSurveyModalProps> = ({
+const MobileFieldSurveyModalContent: React.FC<MobileFieldSurveyModalProps> = ({
   plot,
   isOpen,
   onClose,
   onSurveySubmitted,
 }) => {
-  if (!isOpen) return null;
 
   const [latitude, setLatitude] = useState<number>(plot.boundary_coordinates[0]?.[0] || 18.5793);
   const [longitude, setLongitude] = useState<number>(plot.boundary_coordinates[0]?.[1] || 73.9824);
@@ -287,3 +286,7 @@ export const MobileFieldSurveyModal: React.FC<MobileFieldSurveyModalProps> = ({
     </div>
   );
 };
+
+// Mount the content only while open so its hooks always run in the same order.
+export const MobileFieldSurveyModal: React.FC<MobileFieldSurveyModalProps> = (props) =>
+  props.isOpen ? <MobileFieldSurveyModalContent {...props} /> : null;

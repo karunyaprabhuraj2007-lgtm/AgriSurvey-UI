@@ -41,13 +41,12 @@ interface CropIntelligenceModalProps {
   currentUserRole?: string;
 }
 
-export const CropIntelligenceModal: React.FC<CropIntelligenceModalProps> = ({
+const CropIntelligenceModalContent: React.FC<CropIntelligenceModalProps> = ({
   plot,
   isOpen,
   onClose,
   currentUserRole = 'farmer',
 }) => {
-  if (!isOpen) return null;
 
   const [activeTab, setActiveTab] = useState<'classification' | 'yield' | 'disaster'>('classification');
 
@@ -451,3 +450,7 @@ export const CropIntelligenceModal: React.FC<CropIntelligenceModalProps> = ({
     </div>
   );
 };
+
+// Mount the content only while open so its hooks always run in the same order.
+export const CropIntelligenceModal: React.FC<CropIntelligenceModalProps> = (props) =>
+  props.isOpen ? <CropIntelligenceModalContent {...props} /> : null;

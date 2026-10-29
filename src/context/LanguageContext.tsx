@@ -123,3 +123,6 @@ export const useLanguage = (): LanguageContextType => {
   }
   return context;
 };
+
+/** Same as useLanguage, but returns undefined instead of throwing outside a LanguageProvider. */
+export const useOptionalLanguage = (): LanguageContextType | undefined => useContext(LanguageContext);

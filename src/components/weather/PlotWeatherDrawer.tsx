@@ -26,8 +26,7 @@ interface PlotWeatherDrawerProps {
   onClose: () => void;
 }
 
-export const PlotWeatherDrawer: React.FC<PlotWeatherDrawerProps> = ({ plot, isOpen, onClose }) => {
-  if (!isOpen) return null;
+const PlotWeatherDrawerContent: React.FC<PlotWeatherDrawerProps> = ({ plot, isOpen, onClose }) => {
 
   const [weather, setWeather] = useState<WeatherObservation | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(true);
@@ -206,3 +205,7 @@ export const PlotWeatherDrawer: React.FC<PlotWeatherDrawerProps> = ({ plot, isOp
     </div>
   );
 };
+
+// Mount the content only while open so its hooks always run in the same order.
+export const PlotWeatherDrawer: React.FC<PlotWeatherDrawerProps> = (props) =>
+  props.isOpen ? <PlotWeatherDrawerContent {...props} /> : null;

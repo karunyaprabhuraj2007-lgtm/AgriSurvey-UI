@@ -1,5 +1,5 @@
 import React from 'react';
-import { useLanguage } from '@/context/LanguageContext';
+import { useOptionalLanguage } from '@/context/LanguageContext';
 import { getStatusLabel } from '@/lib/dashboard-localizer';
 
 export interface BadgeProps {
@@ -17,15 +17,8 @@ export const Badge: React.FC<BadgeProps> = ({
   className = '',
   size = 'md',
 }) => {
-  let lang = 'mr';
-  try {
-    const langCtx = useLanguage();
-    if (langCtx && langCtx.language) {
-      lang = langCtx.language;
-    }
-  } catch {
-    // If rendered outside LanguageContext
-  }
+  // Falls back to Marathi when rendered outside LanguageContext
+  const lang = useOptionalLanguage()?.language || 'mr';
   const getBadgeStyle = (st: string) => {
     switch (st) {
       case 'success':

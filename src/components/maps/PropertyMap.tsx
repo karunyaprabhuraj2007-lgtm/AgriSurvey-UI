@@ -41,7 +41,7 @@ export const PropertyMap: React.FC<PropertyMapProps> = ({
   ];
 
   return (
-    <div className="relative rounded-xl overflow-hidden border border-slate-200 shadow-xs bg-slate-100">
+    <div className="relative isolate rounded-xl overflow-hidden border border-slate-200 shadow-xs bg-slate-100">
       <div style={{ height }}>
         <MapContainer
           center={center}
