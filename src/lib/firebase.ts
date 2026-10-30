@@ -14,6 +14,7 @@ export const firebaseConfig = {
 };
 
 export const isFirebaseConfigured: boolean = Boolean(
+  typeof window !== 'undefined' &&
   firebaseConfig.apiKey &&
   firebaseConfig.projectId &&
   firebaseConfig.apiKey.length > 10
