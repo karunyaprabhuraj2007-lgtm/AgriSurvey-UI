@@ -1,0 +1,67 @@
+GM-ML-V2 — Geospatial & GIS-Based Crop Survey System (Maharashtra)
+==================================================================
+
+This archive is the COMPLETE project, including the .git folder with all
+7 commits on branch KARUNYA-PRABHURAJ-E. Nothing is missing.
+
+
+1. RUN IT
+---------
+    cd GM-ML-V2
+    python3 -m venv .venv
+    source .venv/bin/activate          # Windows: .venv\Scripts\activate
+    pip install -r requirements.txt
+
+    # check the satellite hosts are reachable from your network
+    PYTHONPATH=src python3 -m cropsurvey.cli selftest
+
+    # prove it works on REAL Sentinel-2 imagery (no API key needed)
+    python3 verify_real_data.py
+
+    # launch the 15-day period analysis web UI
+    PYTHONPATH=src python3 -m cropsurvey.cli ui
+    #   then open http://127.0.0.1:8000
+
+    # offline demo, works with no internet at all
+    PYTHONPATH=src python3 -m cropsurvey.cli demo --district Pune --season kharif
+
+
+2. PUSH IT TO GITHUB
+--------------------
+The .git folder is already set up: branch KARUNYA-PRABHURAJ-E, origin
+pointing at karunyaprabhuraj2007-lgtm/GM-ML-V2. Just:
+
+    cd GM-ML-V2
+    git push -u origin KARUNYA-PRABHURAJ-E
+
+It will ask for a username and password. Username is your GitHub login.
+For the password use a FINE-GRAINED personal access token scoped to the
+GM-ML-V2 repository only, with Contents: Read and write.
+Make one at: GitHub > Settings > Developer settings >
+             Personal access tokens > Fine-grained tokens
+
+Do NOT use the two classic tokens from our chat — revoke both.
+
+
+3. WHAT NEEDS NO CREDENTIALS
+----------------------------
+Sentinel-2 L2A comes from the AWS Open Data archive via the Element 84
+Earth Search STAC API. No account, no key. If verify_real_data.py fails at
+STEP 1, that is a firewall or proxy on your network, not a credentials
+problem.
+
+Bhoonidhi (ISRO) DOES need an account. Set it in the environment, never
+in a file:
+    export BHOONIDHI_USER="your_user_id"
+    export BHOONIDHI_PASS="your_password"
+
+
+4. READ NEXT
+------------
+    README.md       full documentation, both halves of the problem statement
+    STRUCTURE.md    what every file does
+    MODEL_CARD.md   measured accuracy, how it was validated, known limits
+
+Read the "Known limits" section of MODEL_CARD.md before you demo this.
+The headline accuracy figures come from synthetic imagery and are an
+UPPER BOUND, not a field result.

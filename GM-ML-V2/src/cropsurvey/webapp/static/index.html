@@ -1,0 +1,350 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Crop Survey — Akola</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<style>
+  :root{
+    --bg:#f2f3ef; --panel:#ffffff; --ink:#15201a; --muted:#5f6a62;
+    --line:#d8ddd6; --accent:#1c5e4a; --accent2:#a96c12; --warn:#b3451c;
+    --ok:#2e7d4f;
+  }
+  @media (prefers-color-scheme:dark){
+    :root{--bg:#0f1512;--panel:#18211c;--ink:#e8ede9;--muted:#9aa89f;
+          --line:#283229;--accent:#5cbe95;--accent2:#dfa448;--warn:#e08057;
+          --ok:#6fc392; color-scheme:dark;}
+  }
+  *{box-sizing:border-box}
+  body{margin:0;font:14px/1.55 system-ui,-apple-system,Segoe UI,sans-serif;
+       background:var(--bg);color:var(--ink);height:100vh;overflow:hidden}
+  .app{display:grid;grid-template-columns:330px 1fr 420px;height:100vh}
+  @media (max-width:1100px){.app{grid-template-columns:1fr;grid-template-rows:auto 300px 1fr;overflow:auto;height:auto}}
+
+  .col{overflow-y:auto;border-right:1px solid var(--line)}
+  .col:last-child{border-right:none;border-left:1px solid var(--line)}
+  .pad{padding:14px 16px}
+  h1{font-size:16px;margin:0 0 2px;font-weight:650}
+  h2{font-size:13px;margin:18px 0 8px;text-transform:uppercase;
+     letter-spacing:.07em;color:var(--muted);font-weight:650}
+  .sub{font-size:12px;color:var(--muted)}
+  header{background:var(--panel);border-bottom:1px solid var(--line);
+         position:sticky;top:0;z-index:5}
+
+  .search{display:flex;gap:6px;margin-top:10px}
+  input,select{background:var(--bg);border:1px solid var(--line);color:var(--ink);
+    border-radius:7px;padding:7px 9px;font:inherit;font-size:13px;min-width:0;width:100%}
+  button{background:var(--accent);color:#fff;border:0;border-radius:7px;
+    padding:8px 13px;font:inherit;font-size:13px;font-weight:600;cursor:pointer;white-space:nowrap}
+  button:hover{filter:brightness(1.08)}
+  button.ghost{background:transparent;color:var(--accent);
+    border:1px solid var(--line);font-weight:500}
+  button:disabled{opacity:.5;cursor:not-allowed}
+
+  .site{display:flex;align-items:center;gap:9px;padding:8px 16px;cursor:pointer;
+        border-bottom:1px solid var(--line)}
+  .site:hover{background:var(--bg)}
+  .site.sel{background:color-mix(in srgb,var(--accent) 14%,transparent);
+            box-shadow:inset 3px 0 0 var(--accent)}
+  .dot{width:9px;height:9px;border-radius:50%;background:var(--line);flex:none}
+  .dot.done{background:var(--ok)} .dot.run{background:var(--accent2)}
+  .dot.err{background:var(--warn)}
+  .site .id{font-weight:600;font-size:12.5px}
+  .site .cz{font-size:11.5px;color:var(--muted)}
+  .site .meta{margin-left:auto;font-size:11px;color:var(--muted);text-align:right}
+
+  #map{height:100%;min-height:300px}
+  .leaflet-container{background:var(--bg)}
+
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:10px;
+        padding:13px;margin-bottom:11px}
+  .row{display:flex;justify-content:space-between;gap:10px;padding:3px 0;font-size:13px}
+  .row span:first-child{color:var(--muted)}
+  .row span:last-child{text-align:right;font-variant-numeric:tabular-nums}
+  .big{font-size:21px;font-weight:650;line-height:1.2}
+  .chip{display:inline-block;padding:2px 8px;border-radius:99px;font-size:11.5px;
+        font-weight:600;border:1px solid var(--line)}
+  .chip.ok{color:var(--ok);border-color:var(--ok)}
+  .chip.warn{color:var(--accent2);border-color:var(--accent2)}
+  .chip.bad{color:var(--warn);border-color:var(--warn)}
+  img.out{width:100%;border-radius:8px;border:1px solid var(--line);display:block;
+          margin-bottom:8px;background:var(--bg)}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+  .bar{height:5px;background:var(--line);border-radius:3px;overflow:hidden;margin:7px 0}
+  .bar>i{display:block;height:100%;background:var(--accent);transition:width .3s}
+  .note{font-size:12px;color:var(--muted);line-height:1.5}
+  .warnbox{border-left:3px solid var(--accent2);padding:7px 10px;font-size:12px;
+           background:var(--bg);border-radius:0 6px 6px 0;margin-top:7px}
+  .empty{color:var(--muted);text-align:center;padding:40px 20px;font-size:13px}
+  .thumbs{display:grid;grid-template-columns:repeat(3,1fr);gap:6px}
+  .thumbs img{width:100%;aspect-ratio:1;object-fit:cover;border-radius:6px;
+              border:1px solid var(--line)}
+  .modebar{font-size:11.5px;padding:5px 16px;background:var(--accent2);color:#1b1b1b;
+           font-weight:600}
+  a{color:var(--accent)}
+</style>
+</head>
+<body>
+<div class="app">
+
+  <!-- ---------- sites ---------- -->
+  <div class="col">
+    <header class="pad">
+      <h1>Crop Survey — Akola</h1>
+      <div class="sub" id="cfg">loading…</div>
+      <div class="search">
+        <input id="coord" placeholder="20.4749166,77.1115283" />
+        <button onclick="gotoCoord()">Go</button>
+      </div>
+      <div style="display:flex;gap:6px;margin-top:7px">
+        <button class="ghost" style="flex:1" onclick="runAll()">Analyse all</button>
+        <button class="ghost" style="flex:1" onclick="location.href='/api/export.xlsx'">Export</button>
+      </div>
+    </header>
+    <div id="modebar"></div>
+    <div id="sites"></div>
+  </div>
+
+  <!-- ---------- map ---------- -->
+  <div class="col" style="overflow:hidden"><div id="map"></div></div>
+
+  <!-- ---------- detail ---------- -->
+  <div class="col"><div class="pad" id="detail">
+    <div class="empty">Select a coordinate, or paste one above.</div>
+  </div></div>
+</div>
+
+<script>
+let SITES=[], SEL=null, MAP=null, MARKERS={}, CFG={}, POLL=null;
+
+const fmt=(v,d=2)=>(v==null||isNaN(v))?"—":Number(v).toFixed(d);
+const pct=v=>(v==null||isNaN(v))?"—":(v*100).toFixed(0)+"%";
+
+async function boot(){
+  CFG=await (await fetch('/api/config')).json();
+  document.getElementById('cfg').textContent =
+    `${CFG.n_sites} coordinates · ${CFG.radius_km} km radius · kharif 2026`;
+  if(CFG.demo_mode){
+    document.getElementById('modebar').className='modebar';
+    document.getElementById('modebar').textContent=
+      'DEMO MODE — synthetic imagery, no network. Restart without --demo for real Sentinel-2.';
+  }
+  try{
+    if(typeof L==='undefined') throw new Error('Leaflet not loaded');
+    MAP=L.map('map').setView([20.77,77.05],9);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+      {attribution:'© OpenStreetMap',maxZoom:19}).addTo(MAP);
+    L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+      {attribution:'Esri',maxZoom:19,opacity:.85}).addTo(MAP);
+  }catch(e){
+    MAP=null;
+    document.getElementById('map').innerHTML=
+      '<div class="empty" style="padding:50px 24px">Map unavailable — the Leaflet '
+      +'library could not be loaded from the internet.<br><br>Everything else '
+      +'works offline: pick a coordinate on the left, analyse it, and export.</div>';
+  }
+  await loadSites();
+}
+
+async function loadSites(){
+  SITES=await (await fetch('/api/sites')).json();
+  const box=document.getElementById('sites'); box.innerHTML='';
+  const pts=[];
+  SITES.forEach(s=>{
+    const el=document.createElement('div');
+    el.className='site'+(SEL===s.site_id?' sel':''); el.id='s_'+s.site_id;
+    el.onclick=()=>select(s.site_id);
+    el.innerHTML=`<span class="dot ${s.analysed?'done':''}"></span>
+      <span><span class="id">${s.site_id}</span>
+      <div class="cz">${s.lat.toFixed(5)}, ${s.lon.toFixed(5)}</div></span>
+      <span class="meta">${s.crop??''}${s.n_photos?'<br>'+s.n_photos+' photo':''}</span>`;
+    box.appendChild(el);
+
+    if(!MAP) return;
+    if(MARKERS[s.site_id]) MAP.removeLayer(MARKERS[s.site_id]);
+    const m=L.circleMarker([s.lat,s.lon],{radius:7,weight:2,
+      color:s.analysed?'#2e7d4f':'#888',
+      fillColor:s.analysed?'#2e7d4f':'#bbb',fillOpacity:.75})
+      .addTo(MAP).bindTooltip(`${s.site_id}${s.crop?' · '+s.crop:''}`)
+      .on('click',()=>select(s.site_id));
+    MARKERS[s.site_id]=m; pts.push([s.lat,s.lon]);
+  });
+  if(MAP && pts.length && !SEL) MAP.fitBounds(pts,{padding:[30,30]});
+}
+
+function gotoCoord(){
+  const v=document.getElementById('coord').value.trim();
+  const m=v.match(/^\s*(-?\d+\.?\d*)\s*,\s*(-?\d+\.?\d*)\s*$/);
+  if(!m){alert('Enter as  lat,lon  e.g. 20.4749166,77.1115283');return;}
+  const lat=+m[1], lon=+m[2];
+  let best=null,bd=1e9;
+  SITES.forEach(s=>{const d=Math.hypot(s.lat-lat,s.lon-lon); if(d<bd){bd=d;best=s;}});
+  if(best && bd<0.02){ if(MAP)MAP.setView([best.lat,best.lon],14); select(best.site_id); }
+  else { if(MAP)MAP.setView([lat,lon],14);
+    alert('No site within ~2 km of that coordinate. Nearest is '+best.site_id+'.'); }
+}
+
+async function select(id){
+  SELNEXT(id);
+  const d=await (await fetch('/api/site/'+id)).json();
+  render(id,d);
+  if(!d.result && (d.status||{}).state!=='running') analyse(id);
+  else if((d.status||{}).state==='running') poll(id);
+}
+function SELNEXT(id){
+  document.querySelectorAll('.site').forEach(e=>e.classList.remove('sel'));
+  const e=document.getElementById('s_'+id); if(e)e.classList.add('sel');
+  SEL=id;
+  const s=SITES.find(x=>x.site_id===id);
+  if(s && MAP) MAP.setView([s.lat,s.lon], Math.max(MAP.getZoom(),13));
+}
+
+async function analyse(id,force=false){
+  await fetch(`/api/analyze/${id}?force=${force}`,{method:'POST'});
+  poll(id);
+}
+
+function poll(id){
+  clearInterval(POLL);
+  POLL=setInterval(async()=>{
+    const st=await (await fetch('/api/status/'+id)).json();
+    const el=document.getElementById('prog');
+    if(el){el.querySelector('i').style.width=(st.progress||0)+'%';
+           document.getElementById('progtxt').textContent=st.step||'working…';}
+    const dot=document.querySelector('#s_'+id+' .dot');
+    if(dot) dot.className='dot '+(st.state==='done'?'done':st.state==='error'?'err':'run');
+    if(st.state==='done'||st.state==='error'){
+      clearInterval(POLL);
+      const d=await (await fetch('/api/site/'+id)).json();
+      render(id,d); loadSites();
+    }
+  },1200);
+}
+
+function render(id,d){
+  const box=document.getElementById('detail');
+  const s=d.site, r=d.result, st=d.status||{};
+  let h=`<div class="card"><div style="display:flex;justify-content:space-between;align-items:start">
+      <div><div class="big">${id}</div>
+      <div class="sub">${(+s.lat).toFixed(7)}, ${(+s.lon).toFixed(7)}</div></div>
+      <button class="ghost" onclick="analyse('${id}',true)">Re-run</button></div></div>`;
+
+  if(st.state==='running'||(!r&&st.state!=='error')){
+    h+=`<div class="card"><div id="progtxt" class="sub">${st.step||'starting…'}</div>
+        <div class="bar" id="prog"><i style="width:${st.progress||5}%"></i></div>
+        <div class="note">Live imagery takes 20–90 s per coordinate.</div></div>`;
+  }
+  if(st.state==='error'){
+    h+=`<div class="card"><div class="chip bad">Failed</div>
+        <div class="note" style="margin-top:7px">${st.error||''}</div></div>`;
+  }
+
+  if(r){
+    const c=r.crop||{}, y=r.yield||{};
+    const amb=(c.margin!=null&&c.margin<0.05), trunc=c.truncated;
+    h+=`<div class="card"><h2 style="margin-top:0">Crop</h2>
+      <div class="big">${c.best||'—'}</div>
+      <div style="margin:6px 0">
+        <span class="chip ${trunc?'bad':amb?'warn':'ok'}">
+        ${trunc?'curve truncated':amb?'ambiguous':'clear'}</span>
+        <span class="sub"> fit ${pct(c.fit)} · margin ${pct(c.margin)}</span></div>
+      ${amb&&c.runner_up?`<div class="note">${c.runner_up} fits almost as well
+        (${pct(c.runner_up_fit)}). Treat both as candidates.</div>`:''}
+      <div class="note" style="margin-top:7px">Inferred from the growth curve,
+        not measured.</div></div>`;
+
+    h+=`<div class="card"><h2 style="margin-top:0">Crop situation</h2>`;
+    (r.windows||[]).forEach(w=>{
+      h+=`<div style="margin-bottom:9px">
+        <div style="font-weight:600;font-size:12.5px">${w.label.toUpperCase()}
+          <span class="sub" style="font-weight:400">${w.from} → ${w.to}</span></div>
+        <div>${w.situation}</div>
+        <div class="note">${w.detail}</div></div>`;
+    });
+    h+=`</div>`;
+
+    if(y.estimate_kg_ha){
+      h+=`<div class="card"><h2 style="margin-top:0">Estimated yield</h2>
+        <div class="big">${y.estimate_kg_ha.toLocaleString()} <span class="sub"
+          style="font-size:13px">kg/ha</span></div>
+        <div class="sub">range ${y.low_kg_ha.toLocaleString()}–${y.high_kg_ha.toLocaleString()}
+          · confidence ${y.confidence}</div>
+        <div class="note" style="margin-top:6px">${y.basis||''}</div></div>`;
+    }
+
+    const im=r.images||{};
+    if(Object.keys(im).length){
+      h+=`<div class="card"><h2 style="margin-top:0">Satellite imagery</h2>`;
+      if(im.truecolor) h+=`<img class="out" src="${im.truecolor}" alt="true colour">`;
+      if(im.ndvi_map) h+=`<img class="out" src="${im.ndvi_map}" alt="NDVI">`;
+      if(im.timeseries) h+=`<img class="out" src="${im.timeseries}" alt="NDVI time series">`;
+      if(im.crop_match) h+=`<img class="out" src="${im.crop_match}" alt="crop match">`;
+      h+=`</div>`;
+    }
+
+    const n=r.ndvi||{}, g=r.imagery||{};
+    h+=`<div class="card"><h2 style="margin-top:0">Measurements</h2>
+      <div class="row"><span>Clear passes</span><span>${g.scenes_used} of ${g.scenes_found}</span></div>
+      <div class="row"><span>Area assessed</span><span>${fmt(r.area_ha,1)} ha</span></div>
+      <div class="row"><span>Peak NDVI</span><span>${fmt(n.max,3)}</span></div>
+      <div class="row"><span>Median NDVI</span><span>${fmt(n.median,3)}</span></div>
+      <div class="row"><span>Vegetated</span><span>${pct(n.vegetated_fraction)}</span></div>
+      ${r.condition&&r.condition.stressed_fraction!=null?
+        `<div class="row"><span>Stressed</span><span>${pct(r.condition.stressed_fraction)}</span></div>`:''}
+      </div>`;
+
+    if((r.warnings||[]).length){
+      h+=`<div class="card"><h2 style="margin-top:0">Warnings</h2>`;
+      r.warnings.forEach(w=>h+=`<div class="warnbox">${w}</div>`);
+      h+=`</div>`;
+    }
+  }
+
+  h+=`<div class="card"><h2 style="margin-top:0">Field photographs</h2>
+    <input type="file" id="ph" multiple accept="image/*" style="font-size:12px;padding:4px">
+    <button style="margin-top:7px;width:100%" onclick="upload('${id}')">Upload</button>`;
+  if((d.photos||[]).length){
+    h+=`<div class="thumbs" style="margin-top:9px">`;
+    d.photos.forEach(p=>h+=`<a href="${p}" target="_blank"><img src="${p}"></a>`);
+    h+=`</div>`;
+  } else {
+    h+=`<div class="note" style="margin-top:7px">Your drone and ground photos
+        for this coordinate. They are kept with the site and counted in the export.</div>`;
+  }
+  h+=`</div>`;
+  box.innerHTML=h;
+}
+
+async function upload(id){
+  const f=document.getElementById('ph');
+  if(!f.files.length){alert('Choose files first');return;}
+  const fd=new FormData();
+  for(const file of f.files) fd.append('files',file);
+  await fetch('/api/photo/'+id,{method:'POST',body:fd});
+  const d=await (await fetch('/api/site/'+id)).json();
+  render(id,d); loadSites();
+}
+
+async function runAll(){
+  if(!confirm(`Analyse all ${SITES.length} coordinates? Against live imagery `
+    +`this takes roughly ${Math.ceil(SITES.length*45/60)} minutes.`)) return;
+  for(const s of SITES){
+    if(s.analysed) continue;
+    await fetch(`/api/analyze/${s.site_id}`,{method:'POST'});
+    let done=false;
+    while(!done){
+      await new Promise(r=>setTimeout(r,1500));
+      const st=await (await fetch('/api/status/'+s.site_id)).json();
+      done = st.state==='done'||st.state==='error';
+    }
+    await loadSites();
+  }
+  alert('All sites analysed. Use Export for the client table.');
+}
+
+boot();
+</script>
+</body>
+</html>

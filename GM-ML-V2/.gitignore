@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# Outputs and caches — regenerated, not source
+outputs/
+data/interim/
+data/raw/
+*.tif
+*.tiff
+!data/akola_sites.csv
+
+# Credentials — never commit these
+.env
+*.token
+bhoonidhi_token.json
+.bhoonidhi/
+
+# OS
+.DS_Store
+Thumbs.db

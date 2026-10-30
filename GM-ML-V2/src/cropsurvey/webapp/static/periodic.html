@@ -1,0 +1,325 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Crop Growth Analysis — 15-day periods</title>
+<style>
+  :root{
+    --bg:#f2f3ef; --panel:#fff; --ink:#15201a; --muted:#5f6a62; --line:#d8ddd6;
+    --accent:#1c5e4a; --accent2:#a96c12; --warn:#b3451c; --ok:#2e7d4f;
+  }
+  @media (prefers-color-scheme:dark){
+    :root{--bg:#0f1512;--panel:#18211c;--ink:#e8ede9;--muted:#9aa89f;--line:#283229;
+          --accent:#5cbe95;--accent2:#dfa448;--warn:#e08057;--ok:#6fc392;color-scheme:dark;}
+  }
+  *{box-sizing:border-box}
+  body{margin:0;font:14px/1.55 system-ui,-apple-system,Segoe UI,sans-serif;
+       background:var(--bg);color:var(--ink)}
+  .wrap{max-width:1180px;margin:0 auto;padding:0 max(16px,env(safe-area-inset-left,0px)) 60px}
+  h1{font-size:21px;margin:0 0 3px;font-weight:650}
+  h2{font-size:12px;margin:26px 0 10px;text-transform:uppercase;letter-spacing:.08em;
+     color:var(--muted);font-weight:650}
+  .sub{font-size:12.5px;color:var(--muted)}
+  header{background:var(--panel);border-bottom:1px solid var(--line);padding:18px 0 16px;margin-bottom:22px}
+  .live{display:inline-block;padding:2px 9px;border-radius:99px;font-size:11px;font-weight:650;
+        background:var(--ok);color:#fff;margin-left:8px;vertical-align:2px}
+
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:11px;padding:16px;margin-bottom:14px}
+  label{display:block;font-size:11.5px;color:var(--muted);margin-bottom:4px;font-weight:600;
+        text-transform:uppercase;letter-spacing:.05em}
+  input,select{background:var(--bg);border:1px solid var(--line);color:var(--ink);
+    border-radius:7px;padding:9px 10px;font:inherit;font-size:14px;width:100%}
+  input:focus{outline:2px solid var(--accent);outline-offset:1px}
+  button{background:var(--accent);color:#fff;border:0;border-radius:7px;padding:10px 18px;
+    font:inherit;font-size:14px;font-weight:650;cursor:pointer}
+  button:hover{filter:brightness(1.08)}
+  button:disabled{opacity:.5;cursor:not-allowed}
+  button.ghost{background:transparent;color:var(--accent);border:1px solid var(--line);font-weight:500}
+  .row{display:grid;gap:10px}
+  .r4{grid-template-columns:1fr 1fr 1fr 1fr}
+  .r2{grid-template-columns:1fr 1fr}
+  @media(max-width:760px){.r4,.r2{grid-template-columns:1fr 1fr}}
+  @media(max-width:480px){.r4,.r2{grid-template-columns:1fr}}
+
+  details{border:1px solid var(--line);border-radius:9px;padding:0;background:var(--panel);margin-top:10px}
+  summary{padding:11px 14px;cursor:pointer;font-size:13px;font-weight:600;list-style:none}
+  summary::-webkit-details-marker{display:none}
+  summary::before{content:"▸ ";color:var(--muted)}
+  details[open] summary::before{content:"▾ "}
+  .sites{max-height:260px;overflow-y:auto;border-top:1px solid var(--line)}
+  .site{display:flex;gap:10px;align-items:center;padding:7px 14px;cursor:pointer;font-size:13px;
+        border-bottom:1px solid var(--line)}
+  .site:hover{background:var(--bg)}
+  .site b{font-size:12.5px} .site span{color:var(--muted);font-size:12px}
+
+  .bar{height:6px;background:var(--line);border-radius:3px;overflow:hidden;margin:9px 0}
+  .bar>i{display:block;height:100%;background:var(--accent);transition:width .4s}
+
+  .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}
+  .kpi{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:13px}
+  .kpi .v{font-size:19px;font-weight:650;line-height:1.25}
+  .kpi .l{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:3px}
+
+  .strip{display:flex;gap:9px;overflow-x:auto;padding-bottom:8px}
+  .per{flex:0 0 172px;background:var(--panel);border:1px solid var(--line);border-radius:10px;
+       overflow:hidden;cursor:pointer}
+  .per.sel{border-color:var(--accent);box-shadow:0 0 0 2px var(--accent) inset}
+  .per img{width:100%;aspect-ratio:1;object-fit:cover;display:block;background:var(--bg)}
+  .per .meta{padding:8px 10px}
+  .per .d{font-size:11.5px;font-weight:650}
+  .per .s{font-size:11px;color:var(--muted);margin-top:2px}
+  .per .n{font-size:12.5px;font-weight:650;margin-top:3px}
+  .per.nodata{opacity:.45}
+  .pill{display:inline-block;padding:1px 7px;border-radius:99px;font-size:10px;font-weight:650;
+        border:1px solid var(--line);margin-top:4px}
+  .pill.ok{color:var(--ok);border-color:var(--ok)}
+  .pill.warn{color:var(--accent2);border-color:var(--accent2)}
+  .pill.bad{color:var(--warn);border-color:var(--warn)}
+
+  img.full{width:100%;border-radius:9px;border:1px solid var(--line);background:var(--panel)}
+  table{width:100%;border-collapse:collapse;font-size:12.5px}
+  th,td{text-align:left;padding:8px 9px;border-bottom:1px solid var(--line);vertical-align:top}
+  th{font-size:10.5px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:650}
+  td.num{font-variant-numeric:tabular-nums;white-space:nowrap}
+  .tw{overflow-x:auto;border:1px solid var(--line);border-radius:10px;background:var(--panel)}
+  .warn{border-left:3px solid var(--accent2);background:var(--panel);padding:10px 13px;
+        font-size:12.5px;border-radius:0 7px 7px 0;margin-bottom:8px}
+  .err{border-left:3px solid var(--warn)}
+  .note{font-size:12px;color:var(--muted);line-height:1.55}
+  .hide{display:none}
+</style>
+</head>
+<body>
+
+<header><div class="wrap">
+  <h1>Crop Growth Analysis <span class="live" id="mode">LIVE</span></h1>
+  <div class="sub" id="src">loading…</div>
+</div></header>
+
+<div class="wrap">
+
+  <!-- ---------- input ---------- -->
+  <div class="card">
+    <div class="row r4">
+      <div><label for="lat">Latitude</label>
+        <input id="lat" placeholder="20.4749166" inputmode="decimal"></div>
+      <div><label for="lon">Longitude</label>
+        <input id="lon" placeholder="77.1115283" inputmode="decimal"></div>
+      <div><label for="start">From</label><input id="start" type="date"></div>
+      <div><label for="end">To</label><input id="end" type="date"></div>
+    </div>
+    <div class="row r2" style="margin-top:10px">
+      <div><label for="radius">Area radius (km)</label>
+        <input id="radius" type="number" value="1" min="0.2" max="10" step="0.1"></div>
+      <div><label for="pdays">Period length (days)</label>
+        <input id="pdays" type="number" value="15" min="5" max="30" step="1"></div>
+    </div>
+    <div style="margin-top:13px;display:flex;gap:9px;align-items:center;flex-wrap:wrap">
+      <button id="go" onclick="run()">Analyse this coordinate</button>
+      <button class="ghost" onclick="run(true)">Re-run (ignore cache)</button>
+      <span class="note" id="hint">Paste any coordinate as “lat, lon” into the latitude box and it will split.</span>
+    </div>
+
+    <details>
+      <summary>Or select from the Akola dataset (<span id="nsites">0</span> coordinates)</summary>
+      <div class="sites" id="sites"></div>
+    </details>
+  </div>
+
+  <div id="prog" class="card hide">
+    <div class="sub" id="ptxt">starting…</div>
+    <div class="bar"><i id="pbar" style="width:3%"></i></div>
+    <div class="note">Real imagery takes 30–120 s: every Sentinel-2 pass over the
+      point is fetched, cloud-masked and composited into periods.</div>
+  </div>
+
+  <div id="out"></div>
+</div>
+
+<script>
+let CFG={}, SITES=[], KEY=null, POLL=null, RESULT=null, SEL=0;
+const f=(v,d=3)=>(v===null||v===undefined||isNaN(v))?"—":Number(v).toFixed(d);
+const pc=v=>(v===null||v===undefined||isNaN(v))?"—":(v*100).toFixed(0)+"%";
+
+async function boot(){
+  CFG=await (await fetch('/api/config')).json();
+  document.getElementById('src').textContent =
+    `${CFG.data_source} · ${CFG.period_days}-day composites`;
+  document.getElementById('start').value=CFG.default_start;
+  document.getElementById('end').value=CFG.default_end;
+  document.getElementById('start').max=CFG.max_date;
+  document.getElementById('end').max=CFG.max_date;
+  SITES=await (await fetch('/api/akola')).json();
+  document.getElementById('nsites').textContent=SITES.length;
+  const box=document.getElementById('sites');
+  box.innerHTML=SITES.map((s,i)=>
+    `<div class="site" onclick="pick(${i})"><b>${s.site_id}</b>
+     <span>${s.lat.toFixed(6)}, ${s.lon.toFixed(6)}</span></div>`).join('');
+  // paste "lat, lon" into the latitude field and it splits
+  document.getElementById('lat').addEventListener('input',e=>{
+    const m=e.target.value.match(/^\s*(-?\d+\.?\d*)\s*[, ]\s*(-?\d+\.?\d*)\s*$/);
+    if(m){ e.target.value=m[1]; document.getElementById('lon').value=m[2]; }
+  });
+}
+function pick(i){
+  const s=SITES[i];
+  document.getElementById('lat').value=s.lat;
+  document.getElementById('lon').value=s.lon;
+  document.querySelector('details').open=false;
+  window.scrollTo({top:0,behavior:'smooth'});
+}
+
+async function run(force=false){
+  const lat=parseFloat(document.getElementById('lat').value);
+  const lon=parseFloat(document.getElementById('lon').value);
+  const start=document.getElementById('start').value;
+  const end=document.getElementById('end').value;
+  const radius=parseFloat(document.getElementById('radius').value)||1;
+  const pdays=parseInt(document.getElementById('pdays').value)||15;
+  if(isNaN(lat)||isNaN(lon)){alert('Enter a latitude and longitude.');return;}
+  if(!start||!end){alert('Choose both dates.');return;}
+
+  document.getElementById('out').innerHTML='';
+  document.getElementById('prog').classList.remove('hide');
+  document.getElementById('go').disabled=true;
+
+  const q=new URLSearchParams({lat,lon,start,end,radius_km:radius,
+                               period_days:pdays,force});
+  let r;
+  try{ r=await (await fetch('/api/analyze?'+q,{method:'POST'})).json(); }
+  catch(e){ fail('Could not reach the server.'); return; }
+  if(r.detail){ fail(typeof r.detail==='string'?r.detail:JSON.stringify(r.detail)); return; }
+  KEY=r.key;
+  if(r.state==='cached'){ await show(); return; }
+  poll();
+}
+
+function poll(){
+  clearInterval(POLL);
+  POLL=setInterval(async()=>{
+    const st=await (await fetch('/api/status/'+KEY)).json();
+    document.getElementById('ptxt').textContent=st.step||'working…';
+    document.getElementById('pbar').style.width=(st.progress||4)+'%';
+    if(st.state==='done'){ clearInterval(POLL); await show(); }
+    if(st.state==='error'){ clearInterval(POLL); fail(st.error||'Analysis failed.'); }
+  },1400);
+}
+function fail(msg){
+  document.getElementById('prog').classList.add('hide');
+  document.getElementById('go').disabled=false;
+  document.getElementById('out').innerHTML=
+    `<div class="warn err"><b>Could not analyse this coordinate.</b><br>${msg}</div>`;
+}
+
+async function show(){
+  document.getElementById('prog').classList.add('hide');
+  document.getElementById('go').disabled=false;
+  RESULT=await (await fetch('/api/result/'+KEY)).json();
+  SEL=(RESULT.periods||[]).findIndex(p=>p.has_data);
+  render();
+}
+
+function healthPill(h){
+  if(!h) return '';
+  const c=h.startsWith('Good')?'ok':h.startsWith('Poor')?'bad':
+          h.startsWith('Patchy')?'warn':'';
+  return `<span class="pill ${c}">${h}</span>`;
+}
+
+function render(){
+  const R=RESULT, P=R.periods||[], S=R.summary||{}, out=[];
+
+  out.push(`<h2>Season summary</h2><div class="kpis">
+    <div class="kpi"><div class="l">Crop</div><div class="v">${(R.crop?.ranking?.[0]?.crop)||'—'}</div>
+      <div class="note" style="margin-top:4px">${R.crop?.verdict||''}</div></div>
+    <div class="kpi"><div class="l">Peak canopy</div><div class="v">${f(S.peak_ndvi)}</div>
+      <div class="note">${S.peak_period||'—'}</div></div>
+    <div class="kpi"><div class="l">Season length</div><div class="v">${S.season_length_days?Math.round(S.season_length_days)+' d':'—'}</div>
+      <div class="note">${S.sowing_period||'—'} → ${S.harvest_period||'—'}</div></div>
+    <div class="kpi"><div class="l">Overall health</div><div class="v">${S.overall_health||'—'}</div></div>
+    <div class="kpi"><div class="l">Periods</div><div class="v">${S.n_with_data||0} / ${S.n_periods||0}</div>
+      <div class="note">with cloud-free imagery</div></div>
+    <div class="kpi"><div class="l">Area</div><div class="v">${f(R.area_ha,0)} ha</div>
+      <div class="note">${R.imagery?.scenes_used||0} of ${R.imagery?.scenes_found||0} passes used</div></div>
+  </div>`);
+
+  if(S.narrative) out.push(`<div class="card" style="margin-top:12px">${S.narrative}</div>`);
+  (R.warnings||[]).forEach(w=>out.push(`<div class="warn">${w}</div>`));
+
+  // ---- period strip ----
+  out.push(`<h2>${R.window?.period_days||15}-day image sequence</h2>
+    <div class="note" style="margin-bottom:9px">Every image is a real
+    Sentinel-2 composite on the same grid and the same brightness scale, so
+    changes you see are changes on the ground. Grey areas had no cloud-free
+    view in that window. Click one to enlarge.</div>
+    <div class="strip">`);
+  P.forEach((p,i)=>{
+    const img=R.images?.[`p${String(p.index).padStart(2,'0')}_truecolor`];
+    const nd =R.images?.[`p${String(p.index).padStart(2,'0')}_ndvi`];
+    out.push(`<div class="per ${p.has_data?'':'nodata'} ${i===SEL?'sel':''}"
+        onclick="SEL=${i};render()">
+      ${p.has_data&&(img||nd)?`<img src="${img||nd}" alt="${p.label}">`
+        :`<div style="aspect-ratio:1;display:flex;align-items:center;justify-content:center;
+           color:var(--muted);font-size:11px;text-align:center;padding:8px">no cloud-free<br>imagery</div>`}
+      <div class="meta"><div class="d">${p.label}</div>
+        <div class="s">${p.stage||'—'}</div>
+        <div class="n">${p.has_data?'NDVI '+f(p.mean_ndvi):'—'}</div>
+        ${p.has_data?healthPill(p.health):''}</div></div>`);
+  });
+  out.push(`</div>`);
+
+  // ---- selected period detail ----
+  const sp=P[SEL];
+  if(sp&&sp.has_data){
+    const tag=`p${String(sp.index).padStart(2,'0')}`;
+    out.push(`<h2>${sp.label} — detail</h2><div class="row r2">
+      <div>${R.images?.[tag+'_truecolor']?`<img class="full" src="${R.images[tag+'_truecolor']}">`:''}
+        <div class="note" style="margin-top:6px">True colour</div></div>
+      <div>${R.images?.[tag+'_ndvi']?`<img class="full" src="${R.images[tag+'_ndvi']}">`:''}
+        <div class="note" style="margin-top:6px">NDVI</div></div></div>
+      <div class="card" style="margin-top:12px">
+        <div style="font-weight:650;margin-bottom:5px">${sp.stage} · ${sp.health}</div>
+        <div>${sp.reading||''}</div>
+        <div class="note" style="margin-top:8px">
+          Satellite passes: ${sp.n_scenes} (${(sp.source_dates||[]).join(', ')})<br>
+          Cloud-free coverage: ${pc(sp.coverage)} ·
+          NDVI p10–p90: ${f(sp.p10_ndvi)}–${f(sp.p90_ndvi)} ·
+          Vegetated: ${pc(sp.vegetated_fraction)}
+        </div></div>`);
+  }
+
+  if(R.images?.growth_curve)
+    out.push(`<h2>Growth curve</h2><img class="full" src="${R.images.growth_curve}">`);
+  if(R.images?.strip)
+    out.push(`<h2>Full sequence</h2><img class="full" src="${R.images.strip}">`);
+
+  // ---- table ----
+  out.push(`<h2>Period analysis</h2><div class="tw"><table>
+    <tr><th>Period</th><th>Passes</th><th>Cover</th><th>NDVI</th><th>Stage</th>
+        <th>Change</th><th>Direction</th><th>Health</th><th>Stressed</th></tr>`);
+  P.forEach(p=>{
+    out.push(`<tr><td>${p.label}</td><td class="num">${p.n_scenes}</td>
+      <td class="num">${p.has_data?pc(p.coverage):'—'}</td>
+      <td class="num">${f(p.mean_ndvi)}</td><td>${p.stage}</td>
+      <td class="num">${p.change_since_previous!=null?(p.change_since_previous>0?'+':'')+f(p.change_since_previous):'—'}</td>
+      <td>${p.direction||'—'}</td><td>${p.health}</td>
+      <td class="num">${pc(p.stressed_fraction)}</td></tr>`);
+  });
+  out.push(`</table></div>
+    <div style="margin-top:12px;display:flex;gap:9px">
+      <button class="ghost" onclick="location.href='/api/export/${KEY}.csv'">Download CSV</button>
+      <button class="ghost" onclick="location.href='/api/indices'">Vegetation indices used</button>
+    </div>
+    <div class="note" style="margin-top:14px">
+      NDVI, growth stage and coverage are measurements. Crop identity is
+      inferred from the shape of the growth curve and carries the stated fit —
+      confirm it in the field before acting on it.
+    </div>`);
+
+  document.getElementById('out').innerHTML=out.join('');
+}
+boot();
+</script>
+</body>
+</html>

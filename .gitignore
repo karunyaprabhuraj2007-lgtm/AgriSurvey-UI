@@ -28,3 +28,17 @@ dist-ssr
 
 # Root level video files (assets reside in public/)
 /*.mp4
+
+# Python & ML Environments
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+*/.venv/
+venv/
+*/venv/
+*.egg-info/
+GM-ML-V2/.venv/
+GM-ML-V2/outputs/
+GM-ML-V2/data/interim/
+GM-ML-V2/data/raw/
