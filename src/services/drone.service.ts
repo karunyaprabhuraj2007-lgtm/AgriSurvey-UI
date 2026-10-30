@@ -1,4 +1,6 @@
 import { mockDb } from './mock-db';
+import { putMedia } from '@/lib/media-store';
+import { readPhotoMetadata } from '@/lib/photo-metadata';
 import { notificationService } from './notification.service';
 import { firebaseService } from './firebase.service';
 import { FarmerLandImage, DroneImagery } from '@/types';
@@ -24,27 +26,37 @@ export class DroneService {
   async uploadFarmerImages(params: {
     propertyId: string;
     applicationId: string;
-    files: Array<{ name: string; url: string; preview: string }>;
+    files: File[];
   }): Promise<FarmerLandImage[]> {
     const uploadedList: FarmerLandImage[] = [];
 
-    params.files.forEach((file, idx) => {
+    for (const [idx, file] of params.files.entries()) {
+      const id = `fli-${Date.now()}-${idx}`;
+      const storagePath = `farmer-images/${params.propertyId}/${id}-${file.name}`;
+      const meta = await readPhotoMetadata(file);
+      const stored = await storeEvidenceFile(id, storagePath, file);
       const newImg: FarmerLandImage = {
-        id: `fli-${Date.now()}-${idx}`,
+        id,
         property_id: params.propertyId,
         application_id: params.applicationId,
         uploaded_by: mockDb.currentUser.id,
-        storage_path: `farmer-images/${params.propertyId}/${file.name}`,
+        storage_path: storagePath,
         original_filename: file.name,
-        capture_timestamp: new Date().toISOString(),
-        latitude: 18.579 + idx * 0.0002,
-        longitude: 73.982 + idx * 0.0002,
-        metadata_status: 'METADATA_EXTRACTED',
+        capture_timestamp: meta.capturedAt,
+        latitude: meta.latitude,
+        longitude: meta.longitude,
+        metadata_status: meta.latitude !== null ? 'EXIF_GPS' : 'NO_GPS',
         uploaded_at: new Date().toISOString(),
+        location_source: meta.latitude !== null ? 'EXIF_GPS' : 'NONE',
+        gps_accuracy_m: meta.gpsAccuracyM,
+        camera_make: meta.cameraMake,
+        camera_model: meta.cameraModel,
+        ...stored,
       };
       mockDb.landImages.push(newImg);
       uploadedList.push(newImg);
-    });
+      syncToCloud(newImg, storagePath, file, 'farmer_land_images');
+    }
 
     mockDb.addAuditLog(
       'FARMER_LAND_IMAGES_UPLOADED',
@@ -67,20 +79,6 @@ export class DroneService {
       });
     }
 
-    // Sync to Firebase Cloud Storage and Firestore
-    if (firebaseService.isConfigured) {
-      uploadedList.forEach(async (img, idx) => {
-        const fileObj = params.files[idx];
-        if (fileObj && fileObj.url && fileObj.url.startsWith('data:')) {
-          const downloadUrl = await firebaseService.uploadDataUrl(img.storage_path, fileObj.url);
-          if (downloadUrl) {
-            img.storage_path = downloadUrl;
-          }
-        }
-        firebaseService.saveDocument('farmer_land_images', img.id, img);
-      });
-    }
-
     mockDb.persistAll();
     return uploadedList;
   }
@@ -95,63 +93,94 @@ export class DroneService {
     propertyId: string;
     applicationId: string;
     missionReference: string;
-    files: Array<{ name: string; url: string; preview: string; lat?: number; lng?: number }>;
+    files: File[];
   }): Promise<DroneImagery[]> {
     const uploadedList: DroneImagery[] = [];
 
-    params.files.forEach((file, idx) => {
+    for (const [idx, file] of params.files.entries()) {
+      const id = `drn-${Date.now()}-${idx}`;
+      const storagePath = `drone-imagery/${params.inspectionId}/${id}-${file.name}`;
+      const meta = await readPhotoMetadata(file);
+      const stored = await storeEvidenceFile(id, storagePath, file);
+      const hasGps = meta.latitude !== null;
       const newDroneImg: DroneImagery = {
-        id: `drn-${Date.now()}-${idx}`,
+        id,
         inspection_id: params.inspectionId,
         property_id: params.propertyId,
         application_id: params.applicationId,
         uploaded_by: mockDb.currentUser.id,
-        storage_path: `drone-imagery/${params.inspectionId}/${file.name}`,
+        storage_path: storagePath,
         original_filename: file.name,
-        capture_timestamp: new Date().toISOString(),
-        latitude: file.lat || 18.5793 + idx * 0.0003,
-        longitude: file.lng || 73.9824 + idx * 0.0003,
-        mission_reference: params.missionReference || 'MISSION-PUN-DRONE-01',
-        metadata_status: 'GEO_TAGGED_RTK',
-        processing_status: 'PROCESSED',
+        capture_timestamp: meta.capturedAt,
+        latitude: meta.latitude,
+        longitude: meta.longitude,
+        mission_reference: params.missionReference || null,
+        metadata_status: !hasGps ? 'NO_GPS' : meta.rtkStatus === 'FIXED' ? 'EXIF_GPS_RTK_FIXED' : 'EXIF_GPS',
+        processing_status: 'UPLOADED',
         uploaded_at: new Date().toISOString(),
+        location_source: hasGps ? 'EXIF_GPS' : 'NONE',
+        gps_accuracy_m: meta.gpsAccuracyM,
+        camera_make: meta.cameraMake,
+        camera_model: meta.cameraModel,
+        relative_altitude_m: meta.relativeAltitudeM,
+        rtk_status: meta.rtkStatus,
+        ...stored,
       };
       mockDb.droneImagery.push(newDroneImg);
       uploadedList.push(newDroneImg);
-    });
+      syncToCloud(newDroneImg, storagePath, file, 'drone_imagery');
+    }
 
     // Update inspection status to EVIDENCE_UPLOADED
     const insp = mockDb.inspections.find((i) => i.id === params.inspectionId);
-    if (insp) {
+    if (insp && uploadedList.length) {
       insp.inspection_status = 'EVIDENCE_UPLOADED';
       insp.updated_at = new Date().toISOString();
     }
 
-    mockDb.addAuditLog(
-      'DRONE_IMAGERY_UPLOADED',
-      'drone_imagery',
-      params.inspectionId,
-      null,
-      { mission: params.missionReference, count: params.files.length }
-    );
-
-    // Sync to Firebase Cloud Storage and Firestore
-    if (firebaseService.isConfigured) {
-      uploadedList.forEach(async (img, idx) => {
-        const fileObj = params.files[idx];
-        if (fileObj && fileObj.url && fileObj.url.startsWith('data:')) {
-          const downloadUrl = await firebaseService.uploadDataUrl(img.storage_path, fileObj.url);
-          if (downloadUrl) {
-            img.storage_path = downloadUrl;
-          }
-        }
-        firebaseService.saveDocument('farmer_land_images', img.id, img);
-      });
-    }
+    mockDb.addAuditLog('DRONE_IMAGERY_UPLOADED', 'drone_imagery', params.inspectionId, null, {
+      mission: params.missionReference,
+      count: uploadedList.length,
+      with_gps: uploadedList.filter((i) => i.latitude !== null).length,
+    });
 
     mockDb.persistAll();
     return uploadedList;
   }
+}
+
+/**
+ * Keep the original file locally (IndexedDB). When that is not possible (no IndexedDB),
+ * wait — up to a limit — for the cloud copy instead, so the record still points at a file.
+ */
+async function storeEvidenceFile(id: string, storagePath: string, file: File): Promise<{ media_id?: string; image_url?: string }> {
+  const local = await putMedia(id, file).then(() => id).catch(() => undefined);
+  if (local) return { media_id: local };
+  if (!firebaseService.isConfigured) return {};
+  const remote = await Promise.race([
+    firebaseService.uploadFile(storagePath, file, file.type || undefined).catch(() => null),
+    new Promise<null>((resolve) => setTimeout(() => resolve(null), CLOUD_WAIT_MS)),
+  ]);
+  return remote ? { image_url: remote } : {};
+}
+
+const CLOUD_WAIT_MS = 20000;
+
+/**
+ * Upload the original to cloud storage in the background (Firebase retries for minutes
+ * when offline, so the user is never kept waiting) and record its URL when it lands.
+ */
+function syncToCloud(record: { id: string; image_url?: string }, storagePath: string, file: File, collection: string) {
+  if (!firebaseService.isConfigured || record.image_url) return;
+  firebaseService
+    .uploadFile(storagePath, file, file.type || undefined)
+    .then((url) => {
+      if (!url) return;
+      record.image_url = url;
+      mockDb.persistAll();
+      firebaseService.saveDocument(collection, record.id, record);
+    })
+    .catch(() => {});
 }
 
 export const droneService = new DroneService();

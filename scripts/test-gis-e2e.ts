@@ -19,10 +19,19 @@ import { stacSatelliteService } from '../src/services/stac.service';
 import { ndviProcessorService } from '../src/services/ndvi.service';
 import { mobileSurveyService } from '../src/services/mobile-survey.service';
 import { cropClassificationService } from '../src/services/crop-classification.service';
-import { yieldForecastingService } from '../src/services/yield-forecasting.service';
-import { disasterAssessmentService } from '../src/services/disaster-assessment.service';
 import { reportService } from '../src/services/report.service';
 import { computeGeodesicMeasurements } from '../src/lib/geospatial';
+
+// Synthetic soybean curve (template shape, 5-day sampling) for the offline decision test.
+function syntheticSoybeanSeries(year: number) {
+  const out: { date: string; ndvi: number }[] = [];
+  const start = Date.UTC(year, 5, 10);
+  for (let d = 0; d <= 170; d += 5) {
+    const ndvi = 0.15 + (0.82 - 0.15) * (1 / (1 + Math.exp(-0.14 * (d - 22))) - 1 / (1 + Math.exp(-0.16 * (d - 107))));
+    out.push({ date: new Date(start + d * 86400000).toISOString().slice(0, 10), ndvi });
+  }
+  return out;
+}
 import { canAccessRoute } from '../src/lib/permissions';
 
 function pass(name: string, detail?: string) {
@@ -154,24 +163,32 @@ async function runEndToEndGisSuite() {
   // TEST F: Crop Classification AI & Human Approval Separation
   // ---------------------------------------------------------------------------
   console.log('\n--- TEST F: Crop Classification AI Pipeline ---');
-  const pred = await cropClassificationService.classifyPlotCrop(createdPlot.id);
+  const pred = await cropClassificationService.classifyFromObservations(createdPlot.id, 'kharif', 2025, syntheticSoybeanSeries(2025), 'synthetic test series');
   if (pred.verification_status !== 'AI_PREDICTION') {
     fail('TEST F', 'Unverified prediction must be tagged AI_PREDICTION');
   }
+  if (pred.verdict_status === 'matched' && pred.predicted_crop !== 'soybean') fail('TEST F', 'Wrong crop confidently claimed');
 
+  mockDb.setCurrentUserByRole('farmer');
+  let farmerBlocked = false;
+  try {
+    await cropClassificationService.verifyCropPrediction({ predictionId: pred.id, verifiedCrop: 'soybean', reviewerNotes: 'self' });
+  } catch {
+    farmerBlocked = true;
+  }
+  if (!farmerBlocked) fail('TEST F', 'A farmer must not be able to verify');
+
+  mockDb.setCurrentUserByRole('tahsildar');
   const reviewed = await cropClassificationService.verifyCropPrediction({
     predictionId: pred.id,
-    decision: 'CONFIRMED',
-    verifiedCrop: 'Sugarcane',
-    reviewerId: 'usr-tahsildar-01',
-    reviewerName: 'Anand Shrikant Kulkarni (Tahsildar)',
-    reviewerNotes: 'Confirmed against field survey and aerial drone photogrammetry.',
+    verifiedCrop: 'soybean',
+    reviewerNotes: 'Confirmed against field survey.',
   });
 
-  if (reviewed.verification_status !== 'CONFIRMED' || reviewed.verified_crop !== 'Sugarcane') {
+  if (!reviewed.verified_crop || reviewed.verified_crop !== 'soybean') {
     fail('TEST F', 'Tahsildar verification did not persist properly');
   }
-  pass('TEST F', `AI crop prediction strictly tagged AI_PREDICTION until confirmed by Tahsildar`);
+  pass('TEST F', `Satellite crop result stays unverified until a Tahsildar records the ground crop (${pred.verdict_status})`);
 
   // ---------------------------------------------------------------------------
   // TEST G: Crop Area Aggregation & Deduplication

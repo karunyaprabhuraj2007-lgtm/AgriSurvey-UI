@@ -3,11 +3,29 @@ import {
   MonitoringPeriodObservation,
   MonitoringInspectionItem,
   MonitoringStatus,
-  SatelliteScene,
 } from '@/types';
 import { mockDb } from './mock-db';
-import { stacService } from './stac.service';
 import { computeGeodesicMeasurements } from '@/lib/geospatial';
+import {
+  GrowthAnalysis,
+  GrowthStage,
+  PeriodResult,
+  SurveillanceField,
+  analyseGrowth,
+  runSurveillance,
+} from './field-surveillance.service';
+
+const STAGE_MAP: Record<GrowthStage, MonitoringPeriodObservation['growth_stage']> = {
+  'Bare soil / pre-sowing': 'Fallow',
+  'Sparse / mixed cover': 'Sparse / Mixed Cover',
+  'Emergence / establishment': 'Emergence',
+  'Vegetative growth': 'Vegetative',
+  'Peak canopy (flowering / reproductive)': 'Peak / Reproductive',
+  'Stable canopy': 'Stable Canopy',
+  'Maturity / senescence': 'Maturity',
+  'Harvested / bare': 'Harvested / Senesced',
+  'Insufficient data': 'Unassessed',
+};
 
 export interface CreateMonitoringAreaParams {
   name: string;
@@ -304,13 +322,17 @@ export class SatelliteMonitoringService {
 
   /**
    * 15-Day Monitoring Execution Engine
-   * Idempotently computes period composites, vegetation indices, phenology changes, and ML predictions.
+   *
+   * Reads the clearest Sentinel-2 pass over the area in every 15-day period (see
+   * field-surveillance.service) and stores the measured indices, growth stage and
+   * change per period. Periods without a clear view are stored as such; nothing is
+   * simulated. When imagery cannot be reached, the previous observations are kept and
+   * the area is marked FAILED with the reason.
    */
   public async runPeriodicMonitoring(
     areaId: string,
-    options?: boolean | { force?: boolean; usePythonBackend?: boolean }
+    _options?: boolean | { force?: boolean; usePythonBackend?: boolean }
   ): Promise<MonitoringPeriodObservation[]> {
-    const force = typeof options === 'boolean' ? options : options?.force ?? false;
     const area = mockDb.getMonitoringAreaById(areaId);
     if (!area) throw new Error('Monitoring area not found');
 
@@ -318,319 +340,192 @@ export class SatelliteMonitoringService {
     area.updated_at = new Date().toISOString();
     mockDb.updateMonitoringArea(area);
 
-    // Check if Python periodic service is online on /api/cropsurvey
-    let pythonResult: any = null;
+    const field: SurveillanceField = {
+      id: area.id,
+      name: area.name,
+      area:
+        area.polygon_coordinates && area.polygon_coordinates.length >= 3
+          ? { kind: 'polygon', coordinates: area.polygon_coordinates }
+          : { kind: 'circle', center: { lat: area.latitude, lon: area.longitude }, radiusKm: area.radius_km },
+      startDate: area.start_date,
+      endDate: area.end_date,
+      intervalDays: area.interval_days || 15,
+      declaredCrop: area.preferred_crop,
+      plotId: area.plot_id,
+      createdAt: area.created_at,
+    };
+
+    let results: PeriodResult[];
     try {
-      const pyResp = await fetch(
-        `/api/cropsurvey/analyze?lat=${area.latitude}&lon=${area.longitude}&start=${area.start_date}&end=${area.end_date}&radius_km=${area.radius_km}&period_days=${area.interval_days}&force=${force ? 'true' : 'false'}`,
-        { method: 'POST' }
-      );
-      if (pyResp.ok) {
-        const pyJob = await pyResp.json();
-        // Poll status if running
-        let attempts = 0;
-        while (attempts < 15) {
-          await new Promise((r) => setTimeout(r, 1200));
-          const stResp = await fetch(`/api/cropsurvey/status/${pyJob.key}`);
-          if (stResp.ok) {
-            const st = await stResp.json();
-            if (st.state === 'done' || st.state === 'complete' || st.progress === 100) {
-              const resResp = await fetch(`/api/cropsurvey/result/${pyJob.key}`);
-              if (resResp.ok) {
-                pythonResult = await resResp.json();
-                break;
-              }
-            } else if (st.state === 'error' || st.state === 'failed') {
-              console.warn('Python periodic job error:', st.error);
-              break;
-            }
-          }
-          attempts++;
-        }
-      }
-    } catch (e) {
-      // Backend Python service offline or proxy timeout — proceed with direct client-side STAC & math
-      console.log('Python ML service direct query skipped, using high-precision in-engine remote sensing pipeline.');
+      results = await runSurveillance(field);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      area.status = 'FAILED';
+      area.last_run_error = `Satellite imagery could not be retrieved (${message}). Previous observations were kept.`;
+      area.updated_at = new Date().toISOString();
+      mockDb.updateMonitoringArea(area);
+      throw new Error(area.last_run_error);
     }
 
-    const observations: MonitoringPeriodObservation[] = [];
+    const analysis = analyseGrowth(results, field);
+    const observations = results.map((r, i) => this.toPeriodObservation(area, r, analysis, i));
 
-    if (pythonResult && pythonResult.periods && pythonResult.periods.length > 0) {
-      // Ingest periods from Python ML service
-      for (let i = 0; i < pythonResult.periods.length; i++) {
-        const p = pythonResult.periods[i];
-        const prevObs = i > 0 ? observations[i - 1] : null;
-
-        const deltaNdvi = prevObs && prevObs.has_data && p.has_data ? Number((p.mean_ndvi - prevObs.indices.ndvi_mean).toFixed(4)) : null;
-        const deltaDirection =
-          deltaNdvi === null
-            ? (i === 0 ? 'FIRST_PERIOD' : 'NO_DATA')
-            : deltaNdvi >= 0.05
-            ? 'INCREASED'
-            : deltaNdvi <= -0.05
-            ? 'DECREASED'
-            : 'STABLE';
-
-        const obs: MonitoringPeriodObservation = {
-          id: `obs-${area.id}-p${i + 1}`,
-          monitoring_area_id: area.id,
-          plot_id: area.plot_id,
-          period_label: p.label || `P${i + 1} (${p.start} - ${p.end})`,
-          period_index: i + 1,
-          period_start: p.start,
-          period_end: p.end,
-          actual_acquisition_dates: p.source_dates || [],
-          satellite_provider: pythonResult.data_source || 'Sentinel-2 L2A (Copernicus / AWS Open Data)',
-          scenes_found: p.n_scenes || 1,
-          scenes_used: p.has_data ? (p.n_scenes || 1) : 0,
-          scene_ids: [pythonResult.key || `S2-P${i + 1}`],
-          cloud_cover_pct: p.has_data ? Number(((1 - (p.coverage || 0.8)) * 100).toFixed(1)) : 88.0,
-          valid_pixel_fraction: p.coverage || (p.has_data ? 0.85 : 0.0),
-          boa_offset_applied: -1000,
-          scale_factor: 10000,
-          has_data: Boolean(p.has_data),
-          missing_reason: p.has_data ? undefined : 'Monsoon cloud cover obscuration; optical pixels below quality threshold.',
-          indices: this.calculateVegetationIndices({
-            blue: 0.04,
-            green: 0.08,
-            red: 0.06,
-            nir: (p.mean_ndvi ? (p.mean_ndvi * 0.5 + 0.5) : 0.45) * 0.8,
-            swir1: 0.18,
-          }),
-          growth_stage: (p.stage as any) || 'Vegetative',
-          health_status: (p.health as any) || (p.has_data ? 'Optimal' : 'Cloud Obscured'),
-          delta_ndvi_previous: deltaNdvi,
-          delta_ndmi_previous: deltaNdvi ? Number((deltaNdvi * 0.75).toFixed(4)) : null,
-          delta_direction: deltaDirection,
-          change_summary: p.reading || (deltaNdvi !== null ? `NDVI change of ${deltaNdvi > 0 ? '+' : ''}${deltaNdvi} over period.` : 'Initial observation baseline.'),
-          crop_prediction: pythonResult.crop?.ranking?.[0]
-            ? {
-                crop_name: pythonResult.crop.ranking[0].crop,
-                confidence: Number((pythonResult.crop.ranking[0].fit * 100).toFixed(1)),
-                ranking: pythonResult.crop.ranking,
-                needs_field_check: pythonResult.crop.ranking[0].fit < 0.947,
-                model_version: 'LightGBM-Phenology-v2.0 (Calibrated)',
-              }
-            : undefined,
-          image_urls: {
-            rgb: pythonResult.images?.rgb,
-            ndvi_map: pythonResult.images?.ndvi,
-          },
-          processed_at: new Date().toISOString(),
-        };
-
-        observations.push(obs);
-      }
-    } else {
-      // Robust Native STAC & Phenology Engine
-      const start = new Date(area.start_date);
-      const end = new Date(area.end_date);
-      const totalDays = Math.max(15, Math.round((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)));
-      const numPeriods = Math.max(2, Math.min(12, Math.floor(totalDays / area.interval_days)));
-
-      // Search real scenes over the coordinate
-      const stacResult = await stacService.searchScenes({
-        bbox: {
-          minLon: area.longitude - 0.02,
-          minLat: area.latitude - 0.02,
-          maxLon: area.longitude + 0.02,
-          maxLat: area.latitude + 0.02,
-        },
-        startDate: area.start_date,
-        endDate: area.end_date,
-        maxCloudCover: 85,
-        limit: 20,
-      });
-
-      const stacScenesList: SatelliteScene[] = stacResult.scenes || [];
-
-      // Construct 15-day periods
-      for (let i = 0; i < numPeriods; i++) {
-        const pStart = new Date(start.getTime() + i * area.interval_days * 86400000);
-        const pEnd = new Date(Math.min(end.getTime(), pStart.getTime() + area.interval_days * 86400000));
-        const pStartStr = pStart.toISOString().split('T')[0];
-        const pEndStr = pEnd.toISOString().split('T')[0];
-
-        // Find intersecting scenes for this 15-day period
-        const periodScenes = stacScenesList.filter((s: SatelliteScene) => {
-          const acq = s.acquisition_datetime ? s.acquisition_datetime.split('T')[0] : '';
-          return acq >= pStartStr && acq <= pEndStr;
-        });
-
-        // Determine if period has usable observation
-        const bestScene: SatelliteScene | null =
-          periodScenes.length > 0
-            ? periodScenes.reduce((prev: SatelliteScene, curr: SatelliteScene) =>
-                curr.cloud_cover_percentage < prev.cloud_cover_percentage ? curr : prev
-              )
-            : null;
-        const isCloudyMonsoon = bestScene ? bestScene.cloud_cover_percentage > 75 : i === 2; // Simulate monsoon period 3 outage if no scene
-        const hasData = !isCloudyMonsoon;
-
-        // Phenological curve progression (Emergence -> Vegetative -> Peak -> Maturity)
-        const progress = i / (numPeriods - 1);
-        let baseNdvi = 0.32;
-        let stage: MonitoringPeriodObservation['growth_stage'] = 'Emergence';
-
-        if (progress < 0.25) {
-          baseNdvi = 0.35 + progress * 0.6;
-          stage = 'Emergence';
-        } else if (progress < 0.65) {
-          baseNdvi = 0.50 + (progress - 0.25) * 0.8;
-          stage = 'Vegetative';
-        } else if (progress < 0.85) {
-          baseNdvi = 0.82 - (progress - 0.65) * 0.2;
-          stage = 'Peak / Reproductive';
-        } else {
-          baseNdvi = 0.72 - (progress - 0.85) * 0.8;
-          stage = 'Maturity';
-        }
-
-        const indices = this.calculateVegetationIndices({
-          blue: 0.038,
-          green: 0.076,
-          red: 0.052,
-          nir: baseNdvi * 0.65 + 0.15,
-          swir1: 0.16,
-        });
-
-        const prevObs = i > 0 ? observations[i - 1] : null;
-        const deltaNdvi = prevObs && prevObs.has_data && hasData ? Number((indices.ndvi_mean - prevObs.indices.ndvi_mean).toFixed(4)) : null;
-        const deltaDirection =
-          deltaNdvi === null
-            ? (i === 0 ? 'FIRST_PERIOD' : 'NO_DATA')
-            : deltaNdvi >= 0.05
-            ? 'INCREASED'
-            : deltaNdvi <= -0.05
-            ? 'DECREASED'
-            : 'STABLE';
-
-        const obs: MonitoringPeriodObservation = {
-          id: `obs-${area.id}-p${i + 1}`,
-          monitoring_area_id: area.id,
-          plot_id: area.plot_id,
-          period_label: `P${i + 1} (${pStartStr.slice(5)} - ${pEndStr.slice(5)})`,
-          period_index: i + 1,
-          period_start: pStartStr,
-          period_end: pEndStr,
-          actual_acquisition_dates: bestScene
-            ? [bestScene.acquisition_datetime.split('T')[0]]
-            : hasData
-            ? [pStartStr]
-            : [],
-          satellite_provider: 'Sentinel-2 L2A (Copernicus / AWS Open Data)',
-          scenes_found: periodScenes.length || 1,
-          scenes_used: hasData ? 1 : 0,
-          scene_ids: bestScene ? [bestScene.scene_id] : [`S2B_T43QCA_${pStartStr.replace(/-/g, '')}_L2A`],
-          cloud_cover_pct: bestScene ? bestScene.cloud_cover_percentage : (hasData ? 12.4 : 89.0),
-          valid_pixel_fraction: hasData ? 0.92 : 0.08,
-          boa_offset_applied: -1000,
-          scale_factor: 10000,
-          has_data: hasData,
-          missing_reason: hasData ? undefined : 'Monsoon cloud cover obscuration; optical pixels below quality threshold.',
-          indices,
-          growth_stage: stage,
-          health_status: hasData ? 'Optimal' : 'Cloud Obscured',
-          delta_ndvi_previous: deltaNdvi,
-          delta_ndmi_previous: deltaNdvi ? Number((deltaNdvi * 0.8).toFixed(4)) : null,
-          delta_direction: deltaDirection,
-          change_summary:
-            deltaNdvi !== null
-              ? deltaNdvi > 0
-                ? `Vigor increased by +${deltaNdvi} NDVI, normal canopy progression.`
-                : deltaNdvi < 0
-                ? `Vigor decreased by ${deltaNdvi} NDVI, senescence or dry-down.`
-                : 'Vigor maintained at stable plateau.'
-              : 'Initial observation baseline for observation cycle.',
-          crop_prediction: {
-            crop_name: area.preferred_crop || 'Sugarcane',
-            confidence: 94.8,
-            ranking: [
-              { crop: area.preferred_crop || 'Sugarcane', fit: 0.948 },
-              { crop: 'Soybean', fit: 0.034 },
-              { crop: 'Cotton', fit: 0.018 },
-            ],
-            needs_field_check: false,
-            model_version: 'LightGBM-Phenology-v2.0 (Calibrated)',
-          },
-          processed_at: new Date().toISOString(),
-        };
-
-        observations.push(obs);
+    // Keep the scenes used so their imagery can be re-read later (e.g. in the timeline)
+    for (const r of results) {
+      if (r.scene && !mockDb.satelliteScenes.some((s) => s.scene_id === r.scene!.scene_id)) {
+        mockDb.satelliteScenes.unshift(r.scene);
       }
     }
 
-    // Save observations to database
     mockDb.setPeriodObservationsForArea(area.id, observations);
 
-    // Update monitoring area status & metadata
     const usableCount = observations.filter((o) => o.has_data).length;
     area.status = usableCount > 0 ? 'OBSERVATION_AVAILABLE' : 'INSUFFICIENT_IMAGERY';
     area.total_periods_count = observations.length;
     area.usable_periods_count = usableCount;
-    area.last_observation_at = observations[observations.length - 1]?.period_end || new Date().toISOString();
+    area.last_observation_at = analysis.latest?.acquired.slice(0, 10);
+    area.growth_summary = analysis.summary;
+    area.crop_pattern = {
+      pattern: analysis.cropPattern.pattern,
+      typical_crops: analysis.cropPattern.typicalCrops,
+      explanation: analysis.cropPattern.explanation,
+      declared_crop_agreement: analysis.cropPattern.declaredCropAgreement,
+    };
+    area.alerts = analysis.alerts.map(({ severity, title, detail }) => ({ severity, title, detail }));
+    area.last_run_error = undefined;
+    area.updated_at = new Date().toISOString();
 
     const nextRun = new Date();
-    nextRun.setDate(nextRun.getDate() + 15);
+    nextRun.setDate(nextRun.getDate() + (area.interval_days || 15));
     area.next_scheduled_run_at = nextRun.toISOString().split('T')[0];
 
     mockDb.updateMonitoringArea(area);
 
-    // Check for anomalies & route to Tahsildar inspection queue
-    this.evaluateInspectionRules(area, observations);
+    // Route measured warnings to the Tahsildar inspection queue
+    this.evaluateInspectionRules(area, analysis);
 
     return observations;
   }
 
+  private toPeriodObservation(
+    area: MonitoringArea,
+    r: PeriodResult,
+    analysis: GrowthAnalysis,
+    i: number
+  ): MonitoringPeriodObservation {
+    const g = analysis.perPeriod[i];
+    const s = r.clip?.stats;
+    const hasData = g?.ndvi !== null && g?.ndvi !== undefined && !!s;
+    const prev = [...analysis.perPeriod.slice(0, i)].reverse().find((p) => p.ndvi !== null);
+    const deltaNdvi = hasData && g.deltaNdvi !== null ? Number(g.deltaNdvi.toFixed(4)) : null;
+    const deltaNdmi =
+      hasData && prev && g.ndmi !== null && prev.ndmi !== null ? Number((g.ndmi - prev.ndmi).toFixed(4)) : null;
+    const periodAlerts = analysis.alerts.filter((a) => a.periodIndex === i);
+    const num = (v: number | null | undefined) => (v === null || v === undefined ? NaN : Number(v.toFixed(4)));
+
+    const missingReason = hasData
+      ? undefined
+      : r.status === 'no_pass'
+      ? 'No Sentinel-2 pass over this field in the period.'
+      : r.status === 'error'
+      ? `Imagery could not be read${r.error ? `: ${r.error}` : ''}.`
+      : `Cloud or shadow covered ${s ? (100 - s.validCoveragePct).toFixed(0) : '—'}% of the field on the clearest of ${r.passesInPeriod} pass(es).`;
+
+    return {
+      id: `obs-${area.id}-p${i + 1}`,
+      monitoring_area_id: area.id,
+      plot_id: area.plot_id,
+      period_label: `P${i + 1} (${r.period.start.slice(5)} - ${r.period.end.slice(5)})`,
+      period_index: i + 1,
+      period_start: r.period.start,
+      period_end: r.period.end,
+      actual_acquisition_dates: r.scene ? [r.scene.acquisition_datetime.slice(0, 10)] : [],
+      satellite_provider: 'Copernicus Sentinel-2 L2A (Earth Search / AWS Open Data)',
+      scenes_found: r.passesInPeriod,
+      scenes_used: hasData ? 1 : 0,
+      scene_ids: r.scene ? [r.scene.scene_id] : [],
+      cloud_cover_pct: s ? Number(s.cloudOrShadowPct.toFixed(1)) : NaN,
+      valid_pixel_fraction: s ? Number((s.validCoveragePct / 100).toFixed(3)) : 0,
+      boa_offset_applied: r.clip ? Math.round(r.clip.reflectance.offset * 10000) : 0,
+      scale_factor: r.clip ? Math.round(1 / r.clip.reflectance.scale) : 10000,
+      has_data: hasData,
+      missing_reason: missingReason,
+      indices: {
+        ndvi_mean: hasData ? num(s.ndviMean) : NaN,
+        ndvi_median: hasData ? num(s.ndviMedian) : NaN,
+        ndvi_min: hasData ? num(s.ndviMin) : NaN,
+        ndvi_max: hasData ? num(s.ndviMax) : NaN,
+        ndvi_std: hasData ? num(s.ndviStd) : NaN,
+        evi_mean: hasData ? num(s.eviMean) : NaN,
+        savi_mean: hasData ? num(s.saviMean) : NaN,
+        ndwi_mean: hasData ? num(s.ndwiMean) : NaN,
+        ndmi_mean: hasData ? num(s.ndmiMean) : NaN,
+        ndre_mean: hasData ? num(s.ndreMean) : NaN,
+        gcvi_mean: hasData ? num(s.gcviMean) : NaN,
+      },
+      growth_stage: hasData ? STAGE_MAP[g.stage] : 'Unassessed',
+      health_status: !hasData
+        ? r.status === 'cloudy' || r.status === 'partly_cloudy'
+          ? 'Cloud Obscured'
+          : 'Insufficient Data'
+        : periodAlerts.some((a) => a.severity === 'critical')
+        ? 'High Stress'
+        : periodAlerts.length
+        ? 'Mild Stress'
+        : 'Optimal',
+      delta_ndvi_previous: deltaNdvi,
+      delta_ndmi_previous: deltaNdmi,
+      delta_direction: !hasData
+        ? 'NO_DATA'
+        : deltaNdvi === null
+        ? 'FIRST_PERIOD'
+        : deltaNdvi >= 0.05
+        ? 'INCREASED'
+        : deltaNdvi <= -0.05
+        ? 'DECREASED'
+        : 'STABLE',
+      change_summary: !hasData
+        ? missingReason!
+        : `${g.stage}. Mean NDVI ${g.ndvi!.toFixed(2)}` +
+          (deltaNdvi !== null ? ` (${deltaNdvi >= 0 ? '+' : ''}${deltaNdvi.toFixed(2)} vs previous clear period).` : ' (first clear period).') +
+          (periodAlerts.length ? ` ${periodAlerts.map((a) => a.title).join('; ')}.` : ''),
+      data_origin: 'SENTINEL2_MEASURED',
+      processed_at: new Date().toISOString(),
+    };
+  }
+
   /**
-   * Evaluate inspection triggers and populate the Tahsildar inspection queue
+   * Route measured warnings from the latest run to the Tahsildar inspection queue
    */
-  private evaluateInspectionRules(area: MonitoringArea, observations: MonitoringPeriodObservation[]) {
-    const latest = observations[observations.length - 1];
-    if (!latest) return;
+  private evaluateInspectionRules(area: MonitoringArea, analysis: GrowthAnalysis) {
+    const actionable = analysis.alerts.filter((a) => a.severity !== 'info');
+    if (actionable.length === 0) return;
 
-    const reasons: string[] = [];
-    let priority: MonitoringInspectionItem['priority'] = 'ROUTINE';
+    const plot = area.plot_id ? mockDb.farmPlots.find((p) => p.id === area.plot_id) : undefined;
+    const farmer = mockDb.profiles.find((p) => p.id === (plot?.farmer_id || area.farmer_id));
+    const item: MonitoringInspectionItem = {
+      id: `insp-queue-${area.id}`,
+      monitoring_area_id: area.id,
+      plot_id: area.plot_id,
+      farmer_name: plot?.farmer_name || farmer?.full_name || 'Unknown landholder',
+      district: plot?.district || 'Unknown',
+      taluk: plot?.taluk || 'Unknown',
+      village: plot?.village || 'Unknown',
+      crop_type: area.preferred_crop || plot?.crop_type || 'Not declared',
+      priority: actionable.some((a) => a.severity === 'critical')
+        ? 'CRITICAL'
+        : actionable.length > 1
+        ? 'HIGH'
+        : 'MEDIUM',
+      reasons: actionable.map((a) => a.title),
+      confidence_score: null,
+      latest_ndvi_delta: analysis.latest?.deltaNdvi ?? 0,
+      latest_moisture_level: analysis.latest?.ndmi ?? NaN,
+      status: 'PENDING_OFFICER_REVIEW',
+      created_at: new Date().toISOString(),
+    };
 
-    // Rule 1: Negative vegetation change
-    if (latest.delta_ndvi_previous !== null && latest.delta_ndvi_previous < -0.15) {
-      reasons.push(`Sharp NDVI decline of ${latest.delta_ndvi_previous} detected between periods`);
-      priority = 'HIGH';
-    }
-
-    // Rule 2: Low model prediction confidence
-    if (latest.crop_prediction && latest.crop_prediction.confidence < 90) {
-      reasons.push(`Low crop classification confidence (${latest.crop_prediction.confidence}% < 90%)`);
-      priority = priority === 'HIGH' ? 'CRITICAL' : 'MEDIUM';
-    }
-
-    // Rule 3: Canopy moisture decline
-    if (latest.indices.ndmi_mean < 0.15 && latest.has_data) {
-      reasons.push(`Canopy moisture index (NDMI: ${latest.indices.ndmi_mean}) is critically dry`);
-      priority = 'HIGH';
-    }
-
-    if (reasons.length > 0) {
-      const item: MonitoringInspectionItem = {
-        id: `insp-queue-${area.id}`,
-        monitoring_area_id: area.id,
-        plot_id: area.plot_id,
-        farmer_name: 'Registered Landholder',
-        district: 'Pune',
-        taluk: 'Haveli',
-        village: 'Wagholi',
-        crop_type: area.preferred_crop || latest.crop_prediction?.crop_name || 'Sugarcane',
-        priority,
-        reasons,
-        confidence_score: latest.crop_prediction?.confidence || 88,
-        latest_ndvi_delta: latest.delta_ndvi_previous || 0,
-        latest_moisture_level: latest.indices.ndmi_mean,
-        status: 'PENDING_OFFICER_REVIEW',
-        created_at: new Date().toISOString(),
-      };
-
-      mockDb.addOrUpdateInspectionItem(item);
-    }
+    mockDb.addOrUpdateInspectionItem(item);
   }
 
   /**
@@ -742,34 +637,37 @@ export class SatelliteMonitoringService {
       priority = 'HIGH';
     }
 
-    if (obs.crop_prediction && obs.crop_prediction.confidence < 90) {
-      reasons.push(
-        `Selective prediction confidence threshold not met: ${obs.crop_prediction.crop_name} (${obs.crop_prediction.confidence.toFixed(1)}% < 90%)`
-      );
+    // Satellite crop identification (phenology matcher) that abstained and is not yet verified
+    const pendingCropId = area.plot_id
+      ? mockDb.cropPredictions.find((p) => p.plot_id === area.plot_id && !p.verified_crop)
+      : undefined;
+    if (pendingCropId && (pendingCropId.verdict_status === 'ambiguous' || pendingCropId.verdict_status === 'no_match')) {
+      reasons.push(`Satellite crop identification inconclusive (${pendingCropId.verdict_status.replace('_', ' ')}, ${pendingCropId.season} ${pendingCropId.season_year}); ground check needed`);
       priority = priority === 'HIGH' ? 'CRITICAL' : 'HIGH';
     }
 
-    if (obs.indices && obs.indices.ndmi_mean < 0.15 && obs.has_data) {
+    if (obs.has_data && Number.isFinite(obs.indices?.ndmi_mean) && obs.indices.ndmi_mean < 0.15) {
       reasons.push(`Canopy moisture index (NDMI: ${obs.indices.ndmi_mean.toFixed(2)}) is critically dry`);
       priority = priority === 'CRITICAL' ? 'CRITICAL' : 'HIGH';
     }
 
     if (reasons.length === 0) return null;
 
+    const plot = area.plot_id ? mockDb.farmPlots.find((p) => p.id === area.plot_id) : undefined;
     return {
       id: `insp-${area.id}-${obs.period_index}`,
       monitoring_area_id: area.id,
       plot_id: area.plot_id,
-      farmer_name: farmer?.full_name || 'Ramesh Balasaheb Patil',
-      district: 'Pune',
-      taluk: 'Haveli',
-      village: 'Wagholi',
-      crop_type: area.preferred_crop || obs.crop_prediction?.crop_name || 'Sugarcane',
+      farmer_name: farmer?.full_name || plot?.farmer_name || 'Unknown landholder',
+      district: plot?.district || 'Unknown',
+      taluk: plot?.taluk || 'Unknown',
+      village: plot?.village || 'Unknown',
+      crop_type: area.preferred_crop || 'Not declared',
       priority,
       reasons,
-      confidence_score: obs.crop_prediction?.confidence || 88.0,
+      confidence_score: null,
       latest_ndvi_delta: obs.delta_ndvi_previous || 0,
-      latest_moisture_level: obs.indices?.ndmi_mean ?? 0,
+      latest_moisture_level: obs.indices?.ndmi_mean ?? NaN,
       status: 'PENDING_OFFICER_REVIEW',
       created_at: new Date().toISOString(),
     };

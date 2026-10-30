@@ -33,6 +33,7 @@ import {
   Pie,
   Cell,
 } from 'recharts';
+import { useLocation } from 'react-router-dom';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
@@ -45,8 +46,25 @@ import { mockDb } from '@/services/mock-db';
 import { Profile, AuditLog, StaffRegion, NotificationJob, CropHealthThreshold } from '@/types';
 import { PUNE_TALUKS, MAHARASHTRA_DISTRICTS } from '@/lib/constants';
 
+type AdminTab = 'overview' | 'users' | 'regions' | 'audit' | 'sms' | 'thresholds';
+
+// Sidebar links point at /admin/<section>; open the matching tab for each.
+const tabForPath = (pathname: string): AdminTab => {
+  if (pathname.startsWith('/admin/users')) return 'users';
+  if (pathname.startsWith('/admin/regions')) return 'regions';
+  if (pathname.startsWith('/admin/audit-logs')) return 'audit';
+  if (pathname.startsWith('/admin/settings')) return 'thresholds';
+  return 'overview';
+};
+
 export const AdminDashboardPage: React.FC = () => {
-  const [activeTab, setActiveTab] = useState<'overview' | 'users' | 'regions' | 'audit' | 'sms' | 'thresholds'>('overview');
+  const { pathname } = useLocation();
+  const [activeTab, setActiveTab] = useState<AdminTab>(() => tabForPath(pathname));
+  const [tabPath, setTabPath] = useState(pathname);
+  if (tabPath !== pathname) {
+    setTabPath(pathname);
+    setActiveTab(tabForPath(pathname));
+  }
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [timelineData, setTimelineData] = useState<any[]>([]);
   const [districtData, setDistrictData] = useState<any[]>([]);
@@ -161,7 +179,7 @@ export const AdminDashboardPage: React.FC = () => {
             return (
               <button
                 key={tab.id}
-                onClick={() => setActiveTab(tab.id as any)}
+                onClick={() => setActiveTab(tab.id as AdminTab)}
                 className={`py-3.5 px-4 text-xs font-semibold border-b-2 flex items-center gap-2 transition-all ${
                   isActive
                     ? 'border-emerald-600 text-emerald-800'
@@ -566,17 +584,25 @@ export const AdminDashboardPage: React.FC = () => {
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs">
               <div className="p-4 bg-white rounded-xl border border-slate-200 space-y-1">
                 <span className="font-bold text-slate-800 block text-sm">IoT Gateways Ingestion</span>
-                <span className="text-emerald-700 font-bold">● Active Telemetry Bridge</span>
+                <span className="text-slate-500 font-bold">○ Not monitored</span>
                 <p className="text-slate-500 text-[11px]">
-                  LoRaWAN Gateway Node 0192 operating with 99.8% uptime across Wagholi rural sector.
+                  No live gateway is connected; sensor readings shown elsewhere are sample or manually entered data.
                 </p>
               </div>
 
               <div className="p-4 bg-white rounded-xl border border-slate-200 space-y-1">
-                <span className="font-bold text-slate-800 block text-sm">Vision AI Model Service</span>
-                <span className="text-emerald-700 font-bold">● Online (v1.2.4-agrivision)</span>
+                <span className="font-bold text-slate-800 block text-sm">Plant image analysis</span>
+                <span className="text-slate-500 font-bold">○ Not available</span>
                 <p className="text-slate-500 text-[11px]">
-                  Foliar disease and chlorosis estimation model processing in under 450ms.
+                  No plant-disease image model has been trained or validated. Field photographs are stored as evidence only.
+                </p>
+              </div>
+
+              <div className="p-4 bg-white rounded-xl border border-slate-200 space-y-1">
+                <span className="font-bold text-slate-800 block text-sm">Crop identification</span>
+                <span className="text-amber-700 font-bold">● Phenology template matcher (uncalibrated)</span>
+                <p className="text-slate-500 text-[11px]">
+                  GREEN-MINDS-ML templates on real Sentinel-2 series. Accuracy is measured only on officer-verified plots.
                 </p>
               </div>
 

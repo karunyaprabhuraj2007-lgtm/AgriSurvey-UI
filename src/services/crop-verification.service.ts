@@ -8,12 +8,12 @@ export interface AiCropAnalysisResult {
   statusMessage: string;
   prediction?: {
     cropName: string;
-    botanicalName: string;
-    category: string;
+    botanicalName?: string;
+    category?: string;
     confidence: number;
-    vegetationIndexNdvi: number;
-    canopyDensity: string;
-    suggestedVerification: 'MATCHES' | 'PARTIALLY_MATCHES' | 'DOES_NOT_MATCH';
+    vegetationIndexNdvi: number | null;
+    canopyDensity?: string;
+    suggestedVerification?: 'MATCHES' | 'PARTIALLY_MATCHES' | 'DOES_NOT_MATCH';
   };
 }
 
@@ -37,7 +37,9 @@ export class CropVerificationService {
     if (existing) {
       existing.comparison_result = params.comparisonResult;
       existing.review_notes = params.reviewNotes;
-      existing.similarity_score = params.similarityScore || existing.similarity_score;
+      // Only a measured score is stored; there is no automated image-matching model yet
+      existing.similarity_score = params.similarityScore ?? null;
+      existing.similarity_model_version = params.similarityScore != null ? existing.similarity_model_version : null;
       existing.reviewed_at = new Date().toISOString();
       mockDb.persistAll();
       if (firebaseService.isConfigured) {
@@ -51,8 +53,8 @@ export class CropVerificationService {
       application_id: params.applicationId,
       property_id: params.propertyId,
       comparison_result: params.comparisonResult,
-      similarity_score: params.similarityScore || 92.5,
-      similarity_model_version: 'AgriVision-SIFT-v2.1',
+      similarity_score: params.similarityScore ?? null,
+      similarity_model_version: null,
       review_notes: params.reviewNotes,
       reviewed_by: mockDb.currentUser.id,
       reviewed_at: new Date().toISOString(),
@@ -83,7 +85,7 @@ export class CropVerificationService {
     if (!apiKey || !apiUrl) {
       return {
         isConfigured: false,
-        statusMessage: 'AI crop analysis is currently unavailable. Please complete the verification manually.',
+        statusMessage: 'No image-based crop analysis service is connected, so nothing was analysed. Complete the verification manually; satellite crop identification for a plot is available in GIS Crop Survey.',
       };
     }
 
@@ -105,17 +107,25 @@ export class CropVerificationService {
       }
 
       const data = await response.json();
+      // Only report what the service actually returned; never fill gaps with assumed values.
+      if (typeof data?.crop_name !== 'string' || !data.crop_name || typeof data.confidence !== 'number') {
+        return {
+          isConfigured: true,
+          statusMessage: 'The analysis service did not return a crop and confidence. Proceed with manual verification.',
+        };
+      }
+      const match = ['MATCHES', 'PARTIALLY_MATCHES', 'DOES_NOT_MATCH'].includes(data.suggested_match) ? data.suggested_match : undefined;
       return {
         isConfigured: true,
-        statusMessage: 'AI crop identification completed successfully.',
+        statusMessage: 'Crop analysis service responded. Treat the result as a suggestion; the officer decides.',
         prediction: {
-          cropName: data.crop_name || 'Sugarcane',
-          botanicalName: data.botanical_name || 'Saccharum officinarum',
-          category: data.category || 'Cash Crop',
-          confidence: data.confidence || 94.2,
-          vegetationIndexNdvi: data.ndvi || 0.78,
-          canopyDensity: data.canopy_density || 'Dense / Closed',
-          suggestedVerification: data.suggested_match || 'MATCHES',
+          cropName: data.crop_name,
+          botanicalName: typeof data.botanical_name === 'string' ? data.botanical_name : undefined,
+          category: typeof data.category === 'string' ? data.category : undefined,
+          confidence: data.confidence,
+          vegetationIndexNdvi: typeof data.ndvi === 'number' ? data.ndvi : null,
+          canopyDensity: typeof data.canopy_density === 'string' ? data.canopy_density : undefined,
+          suggestedVerification: match,
         },
       };
     } catch {
@@ -149,7 +159,7 @@ export class CropVerificationService {
       verification_result: params.data.verificationResult,
       ai_prediction: params.aiData?.prediction || null,
       ai_confidence: params.aiData?.confidence || null,
-      ai_model_version: params.aiData ? 'AgriCropNet-ResNet50-v3.2' : null,
+      ai_model_version: params.aiData ? 'external crop-analysis service (unvalidated)' : null,
       reviewer_notes: params.data.reviewerNotes || null,
       verified_by: mockDb.currentUser.id,
       verified_at: new Date().toISOString(),

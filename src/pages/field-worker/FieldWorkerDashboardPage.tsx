@@ -11,11 +11,10 @@ import {
   MapPin,
   Compass,
   AlertCircle,
-  Eye,
-  Info,
   Sprout,
   RefreshCw,
 } from 'lucide-react';
+import { useLocation } from 'react-router-dom';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
@@ -29,43 +28,17 @@ import { mockDb } from '@/services/mock-db';
 import { FieldInspection, DroneImagery, InspectionStatus, MonitoringUnit, FarmPlot } from '@/types';
 import { PlantObservationModal } from '@/components/plant-intelligence/PlantObservationModal';
 import { MobileFieldSurveyModal } from '@/components/field-survey/MobileFieldSurveyModal';
-
-// Pre-packaged high-res aerial drone imagery for demonstration
-const SAMPLE_DRONE_PHOTOS = [
-  {
-    name: 'DJI_20261014_0142_NADIR_ORTHO.JPG',
-    url: 'https://images.unsplash.com/photo-1500382017468-9049fed747ef?auto=format&fit=crop&w=1000&q=80',
-    caption: 'Ortho 1: Nadir top-down aerial boundary alignment at 45m AGL',
-    lat: 18.5793,
-    lng: 73.9824,
-  },
-  {
-    name: 'DJI_20261014_0143_OBLIQUE_EAST.JPG',
-    url: 'https://images.unsplash.com/photo-1625246333195-78d9c38ad449?auto=format&fit=crop&w=1000&q=80',
-    caption: 'Ortho 2: Oblique East-to-West 45-degree angle showing crop height',
-    lat: 18.5796,
-    lng: 73.9822,
-  },
-  {
-    name: 'DJI_20261014_0144_DRIP_IRRIGATION.JPG',
-    url: 'https://images.unsplash.com/photo-1595974482597-4b8da8879bc5?auto=format&fit=crop&w=1000&q=80',
-    caption: 'Ortho 3: Close-up inspection of drip lateral irrigation line',
-    lat: 18.5794,
-    lng: 73.9825,
-  },
-  {
-    name: 'DJI_20261014_0145_BOUNDARY_MARKER.JPG',
-    url: 'https://images.unsplash.com/photo-1560493676-04071c5f467b?auto=format&fit=crop&w=1000&q=80',
-    caption: 'Ortho 4: Southern boundary stone survey marker and hedge line',
-    lat: 18.5791,
-    lng: 73.9829,
-  },
-];
+import { EvidenceImage } from '@/components/media/EvidenceImage';
+import { hasEvidenceFile } from '@/lib/evidence';
+import { PhotoMetadata, locationSourceLabel, readPhotoMetadata } from '@/lib/photo-metadata';
 
 import { useLanguage } from '@/context/LanguageContext';
 
 export const FieldWorkerDashboardPage: React.FC = () => {
   const { t } = useLanguage();
+  const { pathname } = useLocation();
+  // Sidebar links: /inspections = still open, /completed = done, /drone-upload = opens upload dialog
+  const listView = pathname.endsWith('/completed') ? 'completed' : pathname.endsWith('/inspections') ? 'active' : 'all';
   const worker = mockDb.currentUser;
   const [inspections, setInspections] = useState<FieldInspection[]>([]);
   const [selectedInspection, setSelectedInspection] = useState<FieldInspection | null>(null);
@@ -75,6 +48,9 @@ export const FieldWorkerDashboardPage: React.FC = () => {
   const [isUploading, setIsUploading] = useState(false);
   const [droneImages, setDroneImages] = useState<DroneImagery[]>([]);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [pendingFiles, setPendingFiles] = useState<{ file: File; meta: PhotoMetadata }[]>([]);
+  const [isReadingFiles, setIsReadingFiles] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
   const [observationModalOpen, setObservationModalOpen] = useState(false);
   const [selectedUnit, setSelectedUnit] = useState<MonitoringUnit | null>(null);
   const [fieldSurveyModalOpen, setFieldSurveyModalOpen] = useState(false);
@@ -132,34 +108,71 @@ export const FieldWorkerDashboardPage: React.FC = () => {
     }
   };
 
-  const handleUploadSampleDronePhotos = async () => {
-    if (!selectedInspection) return;
-    setIsUploading(true);
+  const handleSelectDroneFiles = async (list: FileList | null) => {
+    if (!list?.length) return;
+    setUploadError(null);
+    setIsReadingFiles(true);
+    const files = Array.from(list).filter((f) => /^image\/(jpeg|png|tiff)$/.test(f.type) || /\.(jpe?g|png|tiff?|dng)$/i.test(f.name));
+    if (files.length < list.length) setUploadError('Only JPG, PNG or TIFF photographs can be uploaded; other files were skipped.');
+    const withMeta = await Promise.all(files.map(async (file) => ({ file, meta: await readPhotoMetadata(file) })));
+    setPendingFiles((prev) => [...prev, ...withMeta]);
+    setIsReadingFiles(false);
+  };
 
+  const closeDroneUpload = () => {
+    setDroneUploadModal(false);
+    setPendingFiles([]);
+    setUploadError(null);
+  };
+
+  const handleUploadDronePhotos = async () => {
+    if (!selectedInspection || pendingFiles.length === 0) return;
+    setIsUploading(true);
+    setUploadError(null);
     try {
-      await droneService.uploadDroneImages({
+      const uploaded = await droneService.uploadDroneImages({
         inspectionId: selectedInspection.id,
         propertyId: selectedInspection.property_id,
         applicationId: selectedInspection.application_id,
         missionReference: missionRef,
-        files: SAMPLE_DRONE_PHOTOS.map((s) => ({
-          name: s.name,
-          url: s.url,
-          preview: s.url,
-          lat: s.lat,
-          lng: s.lng,
-        })),
+        files: pendingFiles.map((p) => p.file),
       });
-
-      setIsUploading(false);
-      setDroneUploadModal(false);
+      const unsaved = uploaded.filter((u) => !u.media_id && !u.image_url).length;
+      if (unsaved) {
+        setUploadError(`${unsaved} photograph(s) could not be stored on this device or in the cloud.`);
+      } else {
+        closeDroneUpload();
+      }
       loadDroneImages(selectedInspection.id);
       loadInspections();
     } catch (err: any) {
+      setUploadError(err.message || String(err));
+    } finally {
       setIsUploading(false);
-      alert(err.message);
     }
   };
+
+  // Telemetry summarised from the uploaded files themselves (sample records have no file)
+  const realDroneImages = droneImages.filter(hasEvidenceFile);
+  const cameraModels = [...new Set(realDroneImages.map((d) => [d.camera_make, d.camera_model].filter(Boolean).join(' ')).filter(Boolean))];
+  const altitudes = realDroneImages.map((d) => d.relative_altitude_m).filter((v): v is number => typeof v === 'number');
+  const geotagged = realDroneImages.filter((d) => d.latitude !== null).length;
+  const rtkFixed = realDroneImages.filter((d) => d.rtk_status === 'FIXED').length;
+  const sampleCount = droneImages.length - realDroneImages.length;
+
+  const isInspectionDone = (i: FieldInspection) =>
+    i.inspection_status === 'COMPLETED' || i.inspection_status === 'SUBMITTED_FOR_REVIEW';
+  const visibleInspections =
+    listView === 'completed'
+      ? inspections.filter(isInspectionDone)
+      : listView === 'active'
+      ? inspections.filter((i) => !isInspectionDone(i))
+      : inspections;
+
+  const hasSelectedInspection = !!selectedInspection;
+  useEffect(() => {
+    if (pathname.endsWith('/drone-upload') && hasSelectedInspection) setDroneUploadModal(true);
+  }, [pathname, hasSelectedInspection]);
 
   const totalAssigned = inspections.length;
   const inProgressCount = inspections.filter((i) => i.inspection_status === 'IN_PROGRESS').length;
@@ -200,10 +213,21 @@ export const FieldWorkerDashboardPage: React.FC = () => {
           {/* Assigned Inspections List (5 Cols) */}
           <div className="lg:col-span-5 space-y-4">
             <h3 className="text-xs font-bold text-slate-900 uppercase tracking-wider">
-              Assigned Field Inspections ({inspections.length})
+              {listView === 'completed'
+                ? 'Completed Surveys'
+                : listView === 'active'
+                ? 'Open Field Inspections'
+                : 'Assigned Field Inspections'}{' '}
+              ({visibleInspections.length})
             </h3>
 
-            {inspections.map((insp) => {
+            {visibleInspections.length === 0 && (
+              <div className="bg-white rounded-xl border border-dashed border-slate-300 p-6 text-center text-xs text-slate-500">
+                {listView === 'completed' ? 'No completed surveys yet.' : 'No inspections in this list.'}
+              </div>
+            )}
+
+            {visibleInspections.map((insp) => {
               const isSelected = selectedInspection?.id === insp.id;
               const prop = insp.property;
               const app = insp.application;
@@ -281,7 +305,7 @@ export const FieldWorkerDashboardPage: React.FC = () => {
                       onClick={() => setDroneUploadModal(true)}
                       icon={<Camera className="w-3.5 h-3.5" />}
                     >
-                      Upload Drone Orthos
+                      Upload Drone Photos
                     </Button>
 
                     <Button
@@ -330,25 +354,38 @@ export const FieldWorkerDashboardPage: React.FC = () => {
                   </div>
                 </div>
 
-                {/* Drone Photogrammetry Telemetry Box (Section 13 Requirement) */}
+                {/* Telemetry read from the uploaded files (EXIF / DJI XMP) */}
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs bg-slate-50 p-3.5 rounded-xl border border-slate-200">
                   <div>
-                    <span className="text-slate-400 block text-[10px] uppercase font-bold">Drone Platform</span>
-                    <span className="font-semibold text-slate-800">DJI Matrice 300 RTK</span>
+                    <span className="text-slate-400 block text-[10px] uppercase font-bold">Camera / drone</span>
+                    <span className="font-semibold text-slate-800">{cameraModels.join(', ') || 'Not in files'}</span>
                   </div>
                   <div>
-                    <span className="text-slate-400 block text-[10px] uppercase font-bold">Flight Altitude</span>
-                    <span className="font-semibold text-slate-800">45 Meters AGL</span>
+                    <span className="text-slate-400 block text-[10px] uppercase font-bold">Flight altitude</span>
+                    <span className="font-semibold text-slate-800">
+                      {altitudes.length
+                        ? `${Math.min(...altitudes).toFixed(0)}–${Math.max(...altitudes).toFixed(0)} m above take-off`
+                        : 'Not in files'}
+                    </span>
                   </div>
                   <div>
-                    <span className="text-slate-400 block text-[10px] uppercase font-bold">RTK Precision</span>
-                    <span className="font-semibold text-emerald-700">± 1.2 cm Horizontal</span>
+                    <span className="text-slate-400 block text-[10px] uppercase font-bold">Geotagged photos</span>
+                    <span className="font-semibold text-slate-800">
+                      {realDroneImages.length ? `${geotagged} of ${realDroneImages.length}` : '—'}
+                    </span>
                   </div>
                   <div>
-                    <span className="text-slate-400 block text-[10px] uppercase font-bold">Telemetry Tag</span>
-                    <span className="font-mono text-slate-800">GEO_TAGGED_RTK</span>
+                    <span className="text-slate-400 block text-[10px] uppercase font-bold">RTK fixed</span>
+                    <span className="font-semibold text-slate-800">
+                      {realDroneImages.length ? (rtkFixed ? `${rtkFixed} photo(s)` : 'None reported') : '—'}
+                    </span>
                   </div>
                 </div>
+                {sampleCount > 0 && (
+                  <p className="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-1.5">
+                    {sampleCount} record(s) below are seeded sample entries without a photograph file; they are not survey evidence.
+                  </p>
+                )}
 
                 {/* Drone Images Gallery */}
                 <div>
@@ -357,7 +394,7 @@ export const FieldWorkerDashboardPage: React.FC = () => {
                       Captured Aerial Imagery ({droneImages.length} Photographs)
                     </h4>
                     <span className="text-[11px] text-slate-400 font-mono">
-                      Mission: {droneImages[0]?.mission_reference || 'MISSION-HAV-081'}
+                      Mission: {droneImages[0]?.mission_reference || '—'}
                     </span>
                   </div>
 
@@ -378,39 +415,27 @@ export const FieldWorkerDashboardPage: React.FC = () => {
                           key={img.id}
                           className="group relative rounded-xl overflow-hidden border border-slate-200 bg-slate-900"
                         >
-                          <img
-                            src={
-                              idx < SAMPLE_DRONE_PHOTOS.length
-                                ? SAMPLE_DRONE_PHOTOS[idx].url
-                                : 'https://images.unsplash.com/photo-1500382017468-9049fed747ef?auto=format&fit=crop&w=600&q=80'
-                            }
-                            alt={img.original_filename}
+                          <EvidenceImage
+                            record={img}
+                            onOpen={setPreviewUrl}
                             className="w-full h-36 object-cover group-hover:scale-105 transition-transform duration-300"
                           />
-                          <div className="absolute inset-0 bg-gradient-to-t from-slate-950/80 via-transparent to-black/30 p-2.5 flex flex-col justify-between">
+                          <div className="absolute inset-0 pointer-events-none bg-gradient-to-t from-slate-950/80 via-transparent to-black/30 p-2.5 flex flex-col justify-between">
                             <div className="flex items-center justify-between">
                               <span className="bg-cyan-600/90 text-white text-[9px] font-bold px-1.5 py-0.5 rounded">
-                                Aerial Ortho #{idx + 1}
+                                Photo #{idx + 1}
                               </span>
-                              <button
-                                onClick={() =>
-                                  setPreviewUrl(
-                                    idx < SAMPLE_DRONE_PHOTOS.length
-                                      ? SAMPLE_DRONE_PHOTOS[idx].url
-                                      : 'https://images.unsplash.com/photo-1500382017468-9049fed747ef?auto=format&fit=crop&w=1200&q=80'
-                                  )
-                                }
-                                className="p-1 rounded bg-white/20 text-white hover:bg-white/40"
-                              >
-                                <Eye className="w-3.5 h-3.5" />
-                              </button>
+
                             </div>
                             <div>
                               <div className="text-white text-[11px] font-bold truncate">
                                 {img.original_filename}
                               </div>
                               <div className="text-[10px] text-cyan-300 font-mono">
-                                Lat: {img.latitude?.toFixed(4)}° • Lng: {img.longitude?.toFixed(4)}°
+                                {img.latitude !== null && img.longitude !== null
+                                  ? `${img.latitude.toFixed(6)}°, ${img.longitude.toFixed(6)}°`
+                                  : 'No GPS in file'}
+                                {img.capture_timestamp ? ` · ${img.capture_timestamp.replace('T', ' ').slice(0, 16)}` : ''}
                               </div>
                             </div>
                           </div>
@@ -455,9 +480,9 @@ export const FieldWorkerDashboardPage: React.FC = () => {
       {/* Drone Upload Modal */}
       <Modal
         isOpen={droneUploadModal}
-        onClose={() => setDroneUploadModal(false)}
-        title="Upload Drone Mission Aerial Imagery"
-        description="Attach high-resolution orthomosaics and oblique photographs with RTK telemetry"
+        onClose={closeDroneUpload}
+        title="Upload Drone Mission Photographs"
+        description="Original JPG / PNG / TIFF files; GPS, capture time and camera details are read from each file"
         maxWidth="lg"
       >
         <div className="space-y-4 text-xs">
@@ -473,33 +498,62 @@ export const FieldWorkerDashboardPage: React.FC = () => {
             />
           </div>
 
-          <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl text-emerald-950 flex items-start gap-2">
-            <Info className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
-            <div>
-              <span className="font-bold">Photogrammetry Quality Assurance:</span> Uploading will stage 4 calibrated aerial perspectives including nadir orthomosaics and oblique crop canopy angles.
-            </div>
-          </div>
-
-          <div className="border-2 border-dashed border-slate-300 rounded-xl p-6 text-center bg-slate-50">
+          <label className="block border-2 border-dashed border-slate-300 rounded-xl p-6 text-center bg-slate-50 cursor-pointer hover:border-emerald-500">
             <UploadCloud className="w-8 h-8 text-slate-400 mx-auto mb-2" />
-            <p className="font-semibold text-slate-700">
-              Drag and drop drone JPG / GeoTIFF files
+            <span className="block font-semibold text-slate-700">Choose drone photographs</span>
+            <span className="block text-[10px] text-slate-400 mt-1">
+              Upload the original camera files — edited or messaging-app copies usually lose their GPS tags.
+            </span>
+            <input
+              type="file"
+              multiple
+              accept="image/jpeg,image/png,image/tiff,.dng"
+              className="sr-only"
+              aria-label="Drone photographs"
+              onChange={(e) => {
+                handleSelectDroneFiles(e.target.files);
+                e.target.value = '';
+              }}
+            />
+          </label>
+
+          {isReadingFiles && <p className="text-slate-500">Reading photo metadata…</p>}
+
+          {pendingFiles.length > 0 && (
+            <ul className="max-h-48 overflow-y-auto divide-y divide-slate-100 border border-slate-200 rounded-lg">
+              {pendingFiles.map(({ file, meta }, i) => (
+                <li key={`${file.name}-${i}`} className="px-2.5 py-1.5 flex items-center justify-between gap-2">
+                  <span className="truncate font-mono text-slate-800">{file.name}</span>
+                  <span className={`shrink-0 text-[10px] ${meta.latitude === null ? 'text-amber-700' : 'text-emerald-700'}`}>
+                    {locationSourceLabel(meta)}
+                    {meta.capturedAt ? ` · ${meta.capturedAt.replace('T', ' ').slice(0, 16)}` : ' · no capture time'}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+          {pendingFiles.some((p) => p.meta.latitude === null) && (
+            <p className="text-amber-800 bg-amber-50 border border-amber-200 rounded-lg p-2">
+              Some photographs have no GPS tag. They will be stored as unlocated evidence; no location is assumed for them.
             </p>
-            <p className="text-[10px] text-slate-400 mt-1">
-              Supports EXIF metadata, RTK GPS tags, and flight logs
+          )}
+          {uploadError && (
+            <p role="alert" className="text-red-700 bg-red-50 border border-red-200 rounded-lg p-2">
+              {uploadError}
             </p>
-          </div>
+          )}
 
           <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-100">
-            <Button variant="ghost" onClick={() => setDroneUploadModal(false)}>
+            <Button variant="ghost" onClick={closeDroneUpload}>
               Cancel
             </Button>
             <Button
-              onClick={handleUploadSampleDronePhotos}
+              onClick={handleUploadDronePhotos}
               isLoading={isUploading}
+              disabled={pendingFiles.length === 0 || isReadingFiles}
               icon={<CheckCircle2 className="w-4 h-4" />}
             >
-              Upload 4 Mission Orthos
+              Upload {pendingFiles.length || ''} photograph{pendingFiles.length === 1 ? '' : 's'}
             </Button>
           </div>
         </div>
@@ -510,9 +564,7 @@ export const FieldWorkerDashboardPage: React.FC = () => {
         {previewUrl && (
           <div className="space-y-2">
             <img src={previewUrl} alt="Drone High Res" className="w-full h-auto rounded-lg max-h-[70vh] object-contain mx-auto" />
-            <div className="text-center text-xs text-slate-500 font-mono">
-              High-resolution RTK orthomosaic • 45m AGL Altitude
-            </div>
+            <div className="text-center text-xs text-slate-500">Original uploaded photograph</div>
           </div>
         )}
       </Modal>

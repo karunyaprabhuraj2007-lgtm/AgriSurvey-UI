@@ -25,6 +25,7 @@ import { inspectionService } from '@/services/inspection.service';
 import { droneService } from '@/services/drone.service';
 import { mockDb } from '@/services/mock-db';
 import { FieldInspection, DroneImagery, InspectionStatus } from '@/types';
+import { EvidenceImage } from '@/components/media/EvidenceImage';
 import { useLanguage } from '@/context/LanguageContext';
 import { localizePlotOrCropName } from '@/lib/dashboard-localizer';
 
@@ -351,9 +352,8 @@ export const FarmerInspectionStatusPage: React.FC = () => {
                               className="group relative rounded-lg overflow-hidden border border-slate-200 bg-slate-900 aspect-video cursor-pointer"
                             >
                               <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent z-10" />
-                              <img
-                                src={`https://images.unsplash.com/photo-1500382017468-9049fed747ef?auto=format&fit=crop&w=600&q=80`}
-                                alt={img.original_filename}
+                              <EvidenceImage
+                                record={img}
                                 className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
                               />
                               <div className="absolute bottom-1.5 left-2 right-2 z-20 flex items-center justify-between text-[10px] text-white">
@@ -385,34 +385,30 @@ export const FarmerInspectionStatusPage: React.FC = () => {
           <Modal
             isOpen={Boolean(previewImageModal)}
             onClose={() => setPreviewImageModal(null)}
-            title={`Aerial Orthomosaic: ${previewImageModal.original_filename}`}
+            title={`Drone photograph: ${previewImageModal.original_filename}`}
             maxWidth="2xl"
           >
             <div className="space-y-4">
               <div className="rounded-xl overflow-hidden bg-slate-950 aspect-video relative">
-                <img
-                  src="https://images.unsplash.com/photo-1500382017468-9049fed747ef?auto=format&fit=crop&w=1200&q=80"
-                  alt="UAV Aerial High-Res Orthomosaic"
-                  className="w-full h-full object-cover"
-                />
+                <EvidenceImage record={previewImageModal} className="w-full h-full object-contain" />
                 <div className="absolute top-3 left-3 bg-black/70 backdrop-blur-md px-2.5 py-1 rounded text-white text-xs font-mono">
-                  RTK FIXED:{' '}
-                  {previewImageModal.latitude != null ? `${previewImageModal.latitude.toFixed(4)}°N` : 'N/A'},{' '}
-                  {previewImageModal.longitude != null ? `${previewImageModal.longitude.toFixed(4)}°E` : 'N/A'}
+                  {previewImageModal.latitude != null && previewImageModal.longitude != null
+                    ? `${previewImageModal.rtk_status === 'FIXED' ? 'RTK fixed' : 'Camera GPS'}: ${previewImageModal.latitude.toFixed(6)}°, ${previewImageModal.longitude.toFixed(6)}°`
+                    : 'No GPS in file'}
                 </div>
               </div>
 
               <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 text-xs bg-slate-50 p-4 rounded-xl border border-slate-200">
                 <div>
                   <span className="text-slate-400 block text-[10px]">MISSION REF</span>
-                  <span className="font-semibold text-slate-800">{previewImageModal.mission_reference}</span>
+                  <span className="font-semibold text-slate-800">{previewImageModal.mission_reference || '—'}</span>
                 </div>
                 <div>
                   <span className="text-slate-400 block text-[10px]">CAPTURE TIME</span>
                   <span className="font-semibold text-slate-800">
                     {previewImageModal.capture_timestamp
-                      ? new Date(previewImageModal.capture_timestamp).toLocaleString()
-                      : 'N/A'}
+                      ? `${previewImageModal.capture_timestamp.replace('T', ' ').slice(0, 16)} (camera clock)`
+                      : 'Not in file'}
                   </span>
                 </div>
                 <div>

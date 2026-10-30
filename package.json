@@ -8,13 +8,15 @@
     "build": "tsc -b && vite build",
     "lint": "oxlint",
     "preview": "vite preview",
-    "test": "tsx scripts/run-acceptance-tests.ts && tsx scripts/test-geospatial-suite.ts && tsx scripts/test-farmer-workflow.ts && tsx scripts/test-gis-e2e.ts"
+    "test": "tsx scripts/test-ml-models.ts && tsx scripts/run-acceptance-tests.ts && tsx scripts/test-geospatial-suite.ts && tsx scripts/test-farmer-workflow.ts && tsx scripts/test-gis-e2e.ts"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.9.1",
     "@supabase/supabase-js": "^2.117.3",
+    "exifr": "^7.1.3",
     "firebase": "^13.1.0",
     "framer-motion": "^14.2.0",
+    "geotiff": "^2.1.3",
     "jspdf": "^4.2.1",
     "jspdf-autotable": "^5.0.8",
     "leaflet": "^1.9.4",

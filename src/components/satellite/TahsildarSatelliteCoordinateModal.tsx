@@ -1,38 +1,39 @@
 /**
  * AgriSurvey AI — Tahsildar Satellite Imagery Coordinate Search Modal
- * 
- * Allows Tahsildars (Revenue Officers) to enter any geographic coordinates (lat, lon)
- * and directly retrieve, view, and inspect real Copernicus Sentinel-2 L2A satellite
- * imagery (True Color visual, False Color NIR, NDVI map) from AWS Open Data via STAC.
+ *
+ * Allows Tahsildars (Revenue Officers) to enter any geographic coordinates (lat, lon),
+ * find Copernicus Sentinel-2 L2A passes over that exact point (Earth Search STAC, AWS
+ * Open Data) and inspect the native 10 m bands clipped to the search radius:
+ * true colour, false colour (NIR) and NDVI with SCL cloud/shadow masking.
  */
 
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   X,
   Satellite,
   Compass,
-  MapPin,
   Calendar,
-  Cloud,
   Search,
-  Eye,
   ExternalLink,
   Layers,
-  Sparkles,
-  CheckCircle2,
   AlertTriangle,
   Loader2,
   Activity,
   PlusCircle,
   Download,
   Maximize2,
+  Info,
 } from 'lucide-react';
-import { SatelliteScene, VegetationIndexObservation } from '@/types';
+import { CircleMarker } from 'react-leaflet';
+import { HighResFieldMap } from './HighResFieldMap';
+import { fieldOutline } from '@/services/field-surveillance.service';
+import { SatelliteScene } from '@/types';
 import { stacSatelliteService, StacSearchResult } from '@/services/stac.service';
 import { satelliteMonitoringService } from '@/services/satellite-monitoring.service';
-import { ndviProcessorService } from '@/services/ndvi.service';
 import { useLanguage } from '@/context/LanguageContext';
 import { getTahsildarLabel } from '@/lib/dashboard-localizer';
+import { loadSceneClip, SceneClip, NDVI_CLASSES, NDVI_MASKED_COLOR } from '@/lib/sentinel-cog';
 
 interface TahsildarSatelliteCoordinateModalProps {
   isOpen: boolean;
@@ -50,15 +51,36 @@ const MAHARASHTRA_JURISDICTIONS = [
   { name: 'Khed, Pune (Chakan Green Belts)', lat: 18.8475, lon: 73.9042, taluk: 'Khed' },
 ];
 
-export const TahsildarSatelliteCoordinateModal: React.FC<TahsildarSatelliteCoordinateModalProps> = ({
-  isOpen,
+type ImageryMode = 'visual' | 'ndvi' | 'false_color';
+
+const isoDate = (d: Date) => d.toISOString().split('T')[0];
+
+const formatCoord = (lat: number, lon: number) =>
+  `${Math.abs(lat).toFixed(5)}° ${lat >= 0 ? 'N' : 'S'}, ${Math.abs(lon).toFixed(5)}° ${lon >= 0 ? 'E' : 'W'}`;
+
+const rgb = (c: [number, number, number]) => `rgb(${c[0]}, ${c[1]}, ${c[2]})`;
+
+const classifyNdvi = (mean: number) =>
+  mean > 0.6
+    ? 'Very High Density'
+    : mean > 0.35
+    ? 'Moderate Density'
+    : mean > 0.2
+    ? 'Sparse / Stressed'
+    : mean > 0
+    ? 'Bare Soil / Tilled'
+    : 'Non-Vegetated / Water';
+
+const clipUrlForMode = (clip: SceneClip, mode: ImageryMode) =>
+  mode === 'ndvi' ? clip.ndviUrl : mode === 'false_color' ? clip.falseColorUrl : clip.trueColorUrl;
+
+const TahsildarSatelliteCoordinateModalContent: React.FC<TahsildarSatelliteCoordinateModalProps> = ({
   onClose,
   onRegisterMonitoringArea,
 }) => {
+  const navigate = useNavigate();
   const { language } = useLanguage();
   const tl = (key: string) => getTahsildarLabel(key, language);
-
-  if (!isOpen) return null;
 
   // Coordinate Inputs
   const [rawCoordInput, setRawCoordInput] = useState<string>('18.5793, 73.9812');
@@ -66,24 +88,54 @@ export const TahsildarSatelliteCoordinateModal: React.FC<TahsildarSatelliteCoord
   const [longitude, setLongitude] = useState<string>('73.9812');
   const [radiusKm, setRadiusKm] = useState<number>(1.5);
 
-  // Search Dates & Filters
-  const [startDate, setStartDate] = useState<string>('2026-06-01');
-  const [endDate, setEndDate] = useState<string>('2026-10-28');
+  // Search Dates & Filters (default: last 120 days up to today)
+  const [startDate, setStartDate] = useState<string>(() => isoDate(new Date(Date.now() - 120 * 24 * 3600 * 1000)));
+  const [endDate, setEndDate] = useState<string>(() => isoDate(new Date()));
   const [maxCloudCover, setMaxCloudCover] = useState<number>(35);
 
   // State
   const [isSearching, setIsSearching] = useState<boolean>(false);
   const [searchResults, setSearchResults] = useState<StacSearchResult | null>(null);
   const [searchError, setSearchError] = useState<string | null>(null);
+  const [searchNotice, setSearchNotice] = useState<string | null>(null);
+  // Location/radius the current results were searched for (inputs may change afterwards)
+  const [searchedArea, setSearchedArea] = useState<{ lat: number; lon: number; radiusKm: number } | null>(null);
 
   // Active Scene Detail & Image View Mode
   const [selectedScene, setSelectedScene] = useState<SatelliteScene | null>(null);
-  const [imageryMode, setImageryMode] = useState<'visual' | 'ndvi' | 'false_color'>('visual');
-  const [expandedImageModalUrl, setExpandedImageModalUrl] = useState<string | null>(null);
+  const [imageryMode, setImageryMode] = useState<ImageryMode>('visual');
+  const [isExpanded, setIsExpanded] = useState<boolean>(false);
 
-  // Quick NDVI processing
-  const [isProcessingNdvi, setIsProcessingNdvi] = useState<boolean>(false);
-  const [calculatedNdvi, setCalculatedNdvi] = useState<VegetationIndexObservation | null>(null);
+  // Clipped 10 m imagery for the selected scene
+  const [clip, setClip] = useState<SceneClip | null>(null);
+  const [clipSceneId, setClipSceneId] = useState<string | null>(null);
+  const [clipError, setClipError] = useState<string | null>(null);
+  const clipLoading = !!selectedScene && !!searchedArea && clipSceneId !== selectedScene.scene_id;
+
+  useEffect(() => {
+    if (!selectedScene || !searchedArea) return;
+    const controller = new AbortController();
+    loadSceneClip(selectedScene, { lat: searchedArea.lat, lon: searchedArea.lon }, searchedArea.radiusKm, controller.signal)
+      .then((result) => {
+        if (controller.signal.aborted) return;
+        setClip(result);
+        setClipError(null);
+        setClipSceneId(selectedScene.scene_id);
+      })
+      .catch((err: unknown) => {
+        if (controller.signal.aborted) return;
+        console.warn('Sentinel-2 COG read failed:', err);
+        const message = err instanceof Error ? err.message : String(err);
+        setClip(null);
+        setClipError(
+          /fetch|network|cors/i.test(message)
+            ? 'Could not download the 10 m band files from AWS Open Data (network or browser restriction). Showing the full-tile preview instead.'
+            : message
+        );
+        setClipSceneId(selectedScene.scene_id);
+      });
+    return () => controller.abort();
+  }, [selectedScene, searchedArea]);
 
   const handleCoordInputChange = (val: string) => {
     setRawCoordInput(val);
@@ -114,18 +166,22 @@ export const TahsildarSatelliteCoordinateModal: React.FC<TahsildarSatelliteCoord
   const handleSearch = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     setSearchError(null);
-    setCalculatedNdvi(null);
+    setSearchNotice(null);
 
     const latNum = parseFloat(latitude);
     const lonNum = parseFloat(longitude);
 
-    if (isNaN(latNum) || isNaN(lonNum)) {
-      setSearchError('Please provide valid numeric coordinates for latitude and longitude.');
+    if (isNaN(latNum) || isNaN(lonNum) || latNum < -90 || latNum > 90 || lonNum < -180 || lonNum > 180) {
+      setSearchError('Please provide valid coordinates: latitude between -90 and 90, longitude between -180 and 180.');
+      return;
+    }
+    if (startDate && endDate && startDate > endDate) {
+      setSearchError('The "from" date must be on or before the "to" date.');
       return;
     }
 
     if (latNum < 15.0 || latNum > 22.5 || lonNum < 72.0 || lonNum > 81.0) {
-      setSearchError(
+      setSearchNotice(
         'Notice: Target coordinates fall outside Maharashtra State boundaries (15.0° - 22.5° N, 72.0° - 81.0° E).'
       );
     }
@@ -143,11 +199,10 @@ export const TahsildarSatelliteCoordinateModal: React.FC<TahsildarSatelliteCoord
       });
 
       setSearchResults(res);
-      if (res.scenes.length > 0) {
-        setSelectedScene(res.scenes[0]);
-      } else {
-        setSelectedScene(null);
-      }
+      setSearchedArea({ lat: latNum, lon: lonNum, radiusKm });
+      setClip(null);
+      setClipSceneId(null);
+      setSelectedScene(res.scenes[0] ?? null);
     } catch (err: any) {
       setSearchError(err.message || 'Failed to query Sentinel-2 scenes from STAC API');
     } finally {
@@ -155,57 +210,14 @@ export const TahsildarSatelliteCoordinateModal: React.FC<TahsildarSatelliteCoord
     }
   };
 
-  const handleComputeNdvi = async (scene: SatelliteScene) => {
-    setIsProcessingNdvi(true);
-    try {
-      // Simulate/Compute real NDVI on the scene coordinates
-      const mockBands = {
-        blue: 0.04,
-        green: 0.09,
-        red: 0.05,
-        nir: 0.48,
-        swir1: 0.21,
-      };
-      const indices = satelliteMonitoringService.calculateVegetationIndices(mockBands);
-      const classification: VegetationIndexObservation['vegetation_classification'] =
-        indices.ndvi_mean > 0.6 ? 'Very High Density' : indices.ndvi_mean > 0.35 ? 'Moderate Density' : 'Sparse / Stressed';
-
-      const latN = parseFloat(latitude);
-      const lonN = parseFloat(longitude);
-      const delta = (radiusKm / 111.32);
-
-      setCalculatedNdvi({
-        id: `veg-obs-tah-${Date.now()}`,
-        plot_id: 'tahsildar-query',
-        scene_id: scene.scene_id,
-        scene_acquisition_date: scene.acquisition_datetime,
-        calculation_date: new Date().toISOString(),
-        ndvi_mean: indices.ndvi_mean,
-        ndvi_min: indices.ndvi_min,
-        ndvi_max: indices.ndvi_max,
-        valid_pixel_coverage_pct: 98.5,
-        vegetation_classification: classification,
-        raster_bounds: [[latN - delta, lonN - delta], [latN + delta, lonN + delta]],
-        processing_method: 'Sentinel-2 L2A BOA Multispectral NDVI',
-        processing_status: 'COMPLETED',
-        created_at: new Date().toISOString(),
-      });
-    } catch (err: any) {
-      alert(`NDVI computation error: ${err.message}`);
-    } finally {
-      setIsProcessingNdvi(false);
-    }
-  };
-
   const handleRegisterMonitoring = async () => {
-    const latNum = parseFloat(latitude);
-    const lonNum = parseFloat(longitude);
+    const area = searchedArea ?? { lat: parseFloat(latitude), lon: parseFloat(longitude), radiusKm };
     try {
       const created = await satelliteMonitoringService.registerMonitoringArea({
-        name: `Tahsildar Investigation Area (${latNum.toFixed(4)}, ${lonNum.toFixed(4)})`,
-        latitude: latNum,
-        longitude: lonNum,
-        radius_km: radiusKm,
+        name: `Tahsildar Investigation Area (${area.lat.toFixed(4)}, ${area.lon.toFixed(4)})`,
+        latitude: area.lat,
+        longitude: area.lon,
+        radius_km: area.radiusKm,
         start_date: startDate,
         end_date: endDate,
         interval_days: 15,
@@ -219,6 +231,19 @@ export const TahsildarSatelliteCoordinateModal: React.FC<TahsildarSatelliteCoord
     } catch (err: any) {
       alert(`Registration error: ${err.message}`);
     }
+  };
+
+  const activeClip = clip && selectedScene && clipSceneId === selectedScene.scene_id ? clip : null;
+  const activeImageUrl = activeClip ? clipUrlForMode(activeClip, imageryMode) : null;
+  const modeLabel =
+    imageryMode === 'ndvi' ? 'NDVI' : imageryMode === 'false_color' ? 'False colour (B08-B04-B03)' : 'True colour (B04-B03-B02)';
+
+  const handleDownloadClip = () => {
+    if (!activeImageUrl || !selectedScene || !searchedArea) return;
+    const a = document.createElement('a');
+    a.href = activeImageUrl;
+    a.download = `${selectedScene.scene_id}_${imageryMode}_${searchedArea.lat.toFixed(5)}_${searchedArea.lon.toFixed(5)}_${searchedArea.radiusKm}km.png`;
+    a.click();
   };
 
   return (
@@ -398,14 +423,20 @@ export const TahsildarSatelliteCoordinateModal: React.FC<TahsildarSatelliteCoord
 
           {/* Search Error Message */}
           {searchError && (
-            <div className="p-3.5 rounded-xl bg-red-50 border border-red-200 text-red-700 text-xs flex items-start gap-2.5">
+            <div role="alert" className="p-3.5 rounded-xl bg-red-50 border border-red-200 text-red-700 text-xs flex items-start gap-2.5">
               <AlertTriangle className="w-4 h-4 shrink-0 text-red-500 mt-0.5" />
               <span>{searchError}</span>
             </div>
           )}
+          {searchNotice && (
+            <div className="p-3.5 rounded-xl bg-amber-50 border border-amber-200 text-amber-800 text-xs flex items-start gap-2.5">
+              <Info className="w-4 h-4 shrink-0 text-amber-600 mt-0.5" />
+              <span>{searchNotice}</span>
+            </div>
+          )}
 
           {/* Satellite Imagery Results Container */}
-          {searchResults && (
+          {searchResults && searchedArea && (
             <div className="space-y-5">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-200 pb-3">
                 <div>
@@ -414,10 +445,26 @@ export const TahsildarSatelliteCoordinateModal: React.FC<TahsildarSatelliteCoord
                     {tl('scenesFoundTitle')} ({searchResults.scenes.length})
                   </h3>
                   <p className="text-xs text-slate-500">
-                    Acquired over Lat: {latitude}° N, Lon: {longitude}° E &bull; Source: {searchResults.dataSource}
+                    Passes covering {formatCoord(searchedArea.lat, searchedArea.lon)} &bull;{' '}
+                    {searchResults.dataSource === 'LIVE_STAC_API'
+                      ? 'Live Earth Search STAC catalogue'
+                      : 'Offline: cached scenes covering this point'}
                   </p>
                 </div>
 
+                <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={() =>
+                    navigate(
+                      `/tahsildar/field-surveillance?lat=${searchedArea.lat}&lon=${searchedArea.lon}&r=${Math.min(1, searchedArea.radiusKm)}`
+                    )
+                  }
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold rounded-lg transition-colors cursor-pointer"
+                >
+                  <Activity className="w-3.5 h-3.5" />
+                  <span>Open 15-day field surveillance</span>
+                </button>
                 <button
                   type="button"
                   onClick={handleRegisterMonitoring}
@@ -426,116 +473,162 @@ export const TahsildarSatelliteCoordinateModal: React.FC<TahsildarSatelliteCoord
                   <PlusCircle className="w-3.5 h-3.5 text-emerald-400" />
                   <span>{tl('start15dMonitoringBtn')}</span>
                 </button>
+                </div>
               </div>
+
+              {searchResults.dataSource === 'LOCAL_INDEX' && (
+                <div className="p-3 rounded-xl bg-amber-50 border border-amber-200 text-amber-800 text-xs flex items-start gap-2">
+                  <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+                  <span>
+                    The live satellite catalogue could not be reached. Only previously retrieved scenes whose footprint
+                    covers this point are listed; newer passes may exist.
+                  </span>
+                </div>
+              )}
+
+              {searchResults.scenes.length === 0 && (
+                <div className="p-4 rounded-xl bg-slate-50 border border-slate-200 text-slate-600 text-xs">
+                  No Sentinel-2 passes with tile cloud cover below {maxCloudCover}% were found for this point between{' '}
+                  {startDate} and {endDate}. Try widening the date range or raising the cloud limit (monsoon months are
+                  often fully clouded).
+                </div>
+              )}
 
               {/* Main Imagery Viewer: Selected Scene & Gallery */}
               {selectedScene ? (
                 <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
                   {/* Image Display Card (7 cols) */}
                   <div className="lg:col-span-7 bg-slate-900 text-white rounded-2xl p-4 space-y-3 overflow-hidden shadow-lg border border-slate-800">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <span className="px-2 py-0.5 bg-emerald-500/20 text-emerald-400 text-[11px] font-bold rounded">
-                          {selectedScene.scene_id.slice(0, 24)}...
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <span className="px-2 py-0.5 bg-emerald-500/20 text-emerald-400 text-[11px] font-bold rounded truncate max-w-[200px]">
+                          {selectedScene.scene_id}
                         </span>
-                        <span className="text-xs text-slate-300 font-mono">
-                          {selectedScene.acquisition_datetime.replace('T', ' ').slice(0, 16)} UTC
+                        <span className="text-xs text-slate-300 font-mono shrink-0">
+                          Acquired {selectedScene.acquisition_datetime.replace('T', ' ').slice(0, 16)} UTC
                         </span>
                       </div>
 
                       {/* Image Mode Switcher */}
-                      <div className="flex items-center gap-1 bg-white/10 p-1 rounded-lg text-[10px]">
-                        <button
-                          type="button"
-                          onClick={() => setImageryMode('visual')}
-                          className={`px-2 py-0.5 rounded font-semibold transition-all ${
-                            imageryMode === 'visual' ? 'bg-emerald-500 text-white' : 'text-slate-300 hover:text-white'
-                          }`}
-                        >
-                          {tl('naturalPhoto')}
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setImageryMode('ndvi')}
-                          className={`px-2 py-0.5 rounded font-semibold transition-all ${
-                            imageryMode === 'ndvi' ? 'bg-emerald-500 text-white' : 'text-slate-300 hover:text-white'
-                          }`}
-                        >
-                          {tl('cropGreennessNdvi')}
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setImageryMode('false_color')}
-                          className={`px-2 py-0.5 rounded font-semibold transition-all ${
-                            imageryMode === 'false_color' ? 'bg-emerald-500 text-white' : 'text-slate-300 hover:text-white'
-                          }`}
-                        >
-                          {tl('plantHealthInfrared')}
-                        </button>
+                      <div className="flex items-center gap-1 bg-white/10 p-1 rounded-lg text-[10px]" role="group" aria-label="Imagery band combination">
+                        {(
+                          [
+                            ['visual', tl('naturalPhoto')],
+                            ['ndvi', tl('cropGreennessNdvi')],
+                            ['false_color', tl('plantHealthInfrared')],
+                          ] as [ImageryMode, string][]
+                        ).map(([mode, label]) => (
+                          <button
+                            key={mode}
+                            type="button"
+                            aria-pressed={imageryMode === mode}
+                            onClick={() => setImageryMode(mode)}
+                            className={`px-2 py-0.5 rounded font-semibold transition-all ${
+                              imageryMode === mode ? 'bg-emerald-500 text-white' : 'text-slate-300 hover:text-white'
+                            }`}
+                          >
+                            {label}
+                          </button>
+                        ))}
                       </div>
                     </div>
 
-                    {/* Satellite Imagery Canvas / Render Frame */}
-                    <div className="relative rounded-xl overflow-hidden aspect-video bg-black/80 flex items-center justify-center border border-slate-800 group">
-                      {imageryMode === 'visual' && (
-                        <img
-                          src={selectedScene.thumbnail_url || 'https://images.unsplash.com/photo-1500382017468-9049fed747ef?w=1000&auto=format&fit=crop&q=80'}
-                          alt="Sentinel-2 Visual True Color"
-                          className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105"
-                        />
-                      )}
-
-                      {imageryMode === 'ndvi' && (
-                        <div className="relative w-full h-full">
-                          <img
-                            src="https://images.unsplash.com/photo-1574943320219-553eb213f72d?w=1000&auto=format&fit=crop&q=80"
-                            alt="NDVI Surface Reflectance Composite"
-                            className="w-full h-full object-cover filter hue-rotate-60 contrast-125 brightness-105"
-                          />
-                          <div className="absolute bottom-2 left-2 px-2 py-1 rounded bg-black/70 backdrop-blur-xs text-[10px] font-mono text-emerald-400">
-                            NDVI Color Ramp: 0.1 (Soil) ➔ 0.85 (Dense Canopy)
-                          </div>
+                    {/* Satellite Imagery Render Frame (north-up, clipped to the search area) */}
+                    <div className="relative rounded-xl overflow-hidden aspect-square bg-black/80 flex items-center justify-center border border-slate-800">
+                      {clipLoading && (
+                        <div className="flex flex-col items-center gap-2 text-slate-300 text-xs p-6 text-center">
+                          <Loader2 className="w-6 h-6 animate-spin text-emerald-400" />
+                          <span>Downloading 10 m Sentinel-2 bands for this location…</span>
                         </div>
                       )}
 
-                      {imageryMode === 'false_color' && (
-                        <div className="relative w-full h-full">
+                      {!clipLoading && activeImageUrl && (
+                        <>
                           <img
-                            src="https://images.unsplash.com/photo-1625246333195-78d9c38ad449?w=1000&auto=format&fit=crop&q=80"
-                            alt="NIR False Color"
-                            className="w-full h-full object-cover filter hue-rotate-180 contrast-150"
+                            src={activeImageUrl}
+                            alt={`Sentinel-2 ${modeLabel} around ${formatCoord(searchedArea.lat, searchedArea.lon)}`}
+                            className="w-full h-full object-contain"
                           />
-                          <div className="absolute bottom-2 left-2 px-2 py-1 rounded bg-black/70 backdrop-blur-xs text-[10px] font-mono text-red-400">
-                            B08 NIR Reflection: Intense Red denotes high biomass vigor
+                          {/* Search radius & exact target point */}
+                          <svg className="absolute inset-0 w-full h-full pointer-events-none" viewBox="0 0 100 100" preserveAspectRatio="none">
+                            <circle cx="50" cy="50" r="50" fill="none" stroke="white" strokeOpacity="0.7" strokeWidth="0.4" strokeDasharray="1.5 1" vectorEffect="non-scaling-stroke" />
+                            <line x1="50" y1="46" x2="50" y2="48.8" stroke="#facc15" strokeWidth="2" vectorEffect="non-scaling-stroke" />
+                            <line x1="50" y1="51.2" x2="50" y2="54" stroke="#facc15" strokeWidth="2" vectorEffect="non-scaling-stroke" />
+                            <line x1="46" y1="50" x2="48.8" y2="50" stroke="#facc15" strokeWidth="2" vectorEffect="non-scaling-stroke" />
+                            <line x1="51.2" y1="50" x2="54" y2="50" stroke="#facc15" strokeWidth="2" vectorEffect="non-scaling-stroke" />
+                          </svg>
+                          <button
+                            type="button"
+                            onClick={() => setIsExpanded(true)}
+                            className="absolute top-2 right-2 p-1.5 rounded-lg bg-black/60 hover:bg-black/90 text-white backdrop-blur-xs transition-colors cursor-pointer"
+                            title="Expand satellite image"
+                            aria-label="Expand satellite image"
+                          >
+                            <Maximize2 className="w-4 h-4" />
+                          </button>
+                          <div className="absolute bottom-2 left-2 px-2 py-1 rounded bg-black/70 text-[10px] font-mono text-slate-200">
+                            {modeLabel} &bull; {(searchedArea.radiusKm * 2).toFixed(1)} km × {(searchedArea.radiusKm * 2).toFixed(1)} km &bull; North up
+                          </div>
+                        </>
+                      )}
+
+                      {!clipLoading && !activeImageUrl && (
+                        <div className="relative w-full h-full">
+                          {selectedScene.thumbnail_url && (
+                            <img
+                              src={selectedScene.thumbnail_url}
+                              alt="Sentinel-2 full tile preview"
+                              className="w-full h-full object-contain opacity-80"
+                            />
+                          )}
+                          <div className="absolute inset-x-2 bottom-2 p-2 rounded bg-black/80 text-[11px] text-amber-300 flex items-start gap-1.5">
+                            <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+                            <span>
+                              {clipError || 'Band files unavailable for this scene.'} The preview covers the whole ~110 km
+                              tile at low resolution and is not centred on your coordinates.
+                            </span>
                           </div>
                         </div>
                       )}
-
-                      {/* Expand Button */}
-                      <button
-                        type="button"
-                        onClick={() => {
-                          const url = selectedScene.visual_url && !selectedScene.visual_url.endsWith('.tif')
-                            ? selectedScene.visual_url
-                            : selectedScene.thumbnail_url || 'https://images.unsplash.com/photo-1500382017468-9049fed747ef?w=1200&auto=format&fit=crop&q=80';
-                          setExpandedImageModalUrl(url);
-                        }}
-                        className="absolute top-2 right-2 p-1.5 rounded-lg bg-black/60 hover:bg-black/90 text-white backdrop-blur-xs transition-colors cursor-pointer"
-                        title="Expand Satellite Image"
-                      >
-                        <Maximize2 className="w-4 h-4" />
-                      </button>
 
                       {/* Watermark badge */}
                       <div className="absolute top-2 left-2 px-2 py-0.5 rounded bg-black/60 text-emerald-400 font-mono text-[9px] backdrop-blur-xs">
-                        Copernicus Sentinel-2 L2A &bull; 10m GSD
+                        Copernicus Sentinel-2 L2A &bull; {activeClip ? '10 m bands' : 'tile preview'}
                       </div>
                     </div>
 
+                    {/* NDVI legend (labels, not colour alone) */}
+                    {imageryMode === 'ndvi' && activeClip && (
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-x-3 gap-y-1 text-[10px] text-slate-300">
+                        {NDVI_CLASSES.map((cls) => (
+                          <span key={cls.label} className="flex items-center gap-1.5">
+                            <span className="w-3 h-3 rounded-sm shrink-0 border border-white/20" style={{ background: rgb(cls.color) }} />
+                            {cls.label}
+                          </span>
+                        ))}
+                        <span className="flex items-center gap-1.5">
+                          <span className="w-3 h-3 rounded-sm shrink-0 border border-white/20" style={{ background: rgb(NDVI_MASKED_COLOR) }} />
+                          Masked (cloud / shadow / no data)
+                        </span>
+                      </div>
+                    )}
+
                     {/* Image Footer with Links */}
-                    <div className="flex items-center justify-between text-xs text-slate-400 pt-1">
-                      <span>Cloud Cover: <strong className="text-white">{selectedScene.cloud_cover_percentage}%</strong></span>
+                    <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-slate-400 pt-1">
+                      <span>
+                        Tile cloud cover: <strong className="text-white">{selectedScene.cloud_cover_percentage}%</strong>
+                      </span>
                       <div className="flex items-center gap-3">
+                        {activeImageUrl && (
+                          <button
+                            type="button"
+                            onClick={handleDownloadClip}
+                            className="text-slate-300 hover:text-white inline-flex items-center gap-1 cursor-pointer"
+                          >
+                            <Download className="w-3.5 h-3.5" />
+                            <span>Save this view (PNG)</span>
+                          </button>
+                        )}
                         {selectedScene.visual_url && (
                           <a
                             href={selectedScene.visual_url}
@@ -544,25 +637,18 @@ export const TahsildarSatelliteCoordinateModal: React.FC<TahsildarSatelliteCoord
                             className="text-emerald-400 hover:text-emerald-300 inline-flex items-center gap-1 font-semibold"
                           >
                             <ExternalLink className="w-3.5 h-3.5" />
-                            <span>Download Full TCI (.tif)</span>
-                          </a>
-                        )}
-                        {selectedScene.thumbnail_url && (
-                          <a
-                            href={selectedScene.thumbnail_url}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="text-slate-300 hover:text-white inline-flex items-center gap-1"
-                          >
-                            <Download className="w-3.5 h-3.5" />
-                            <span>Save Preview</span>
+                            <span>Full tile TCI (.tif)</span>
                           </a>
                         )}
                       </div>
                     </div>
+                    <p className="text-[10px] text-slate-500 leading-snug">
+                      Display contrast is stretched and lightly sharpened for readability. Sentinel-2 resolves 10 m per
+                      pixel, so individual small plots (&lt; 0.5 ha) may span only a few dozen pixels.
+                    </p>
                   </div>
 
-                  {/* Scene Inspection & Quick NDVI Analysis (5 cols) */}
+                  {/* Scene Inspection & NDVI Analysis (5 cols) */}
                   <div className="lg:col-span-5 space-y-4">
                     {/* Scene Metadata Specs */}
                     <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 text-xs space-y-2.5">
@@ -570,138 +656,203 @@ export const TahsildarSatelliteCoordinateModal: React.FC<TahsildarSatelliteCoord
                         <Layers className="w-3.5 h-3.5 text-emerald-600" />
                         Satellite Pass Information
                       </h4>
-                      <div className="space-y-1.5 text-slate-600">
-                        <div className="flex justify-between">
-                          <span>Satellite ID:</span>
-                          <span className="font-mono font-bold text-slate-900 truncate max-w-[180px]">
+                      <dl className="space-y-1.5 text-slate-600">
+                        <div className="flex justify-between gap-3">
+                          <dt>Scene ID:</dt>
+                          <dd className="font-mono font-bold text-slate-900 truncate max-w-[200px]" title={selectedScene.scene_id}>
                             {selectedScene.scene_id}
-                          </span>
+                          </dd>
                         </div>
-                        <div className="flex justify-between">
-                          <span>Date & Time:</span>
-                          <span className="font-mono font-bold text-slate-900">
+                        <div className="flex justify-between gap-3">
+                          <dt>Collection / tile:</dt>
+                          <dd className="font-mono text-slate-900">
+                            {selectedScene.collection}
+                            {selectedScene.mgrs_tile ? ` · ${selectedScene.mgrs_tile}` : ''}
+                          </dd>
+                        </div>
+                        <div className="flex justify-between gap-3">
+                          <dt>Acquired:</dt>
+                          <dd className="font-mono font-bold text-slate-900">
                             {new Date(selectedScene.acquisition_datetime).toLocaleString()}
-                          </span>
+                          </dd>
                         </div>
-                        <div className="flex justify-between">
-                          <span>Cloud Cover:</span>
-                          <span
-                            className={`font-mono font-bold ${
-                              selectedScene.cloud_cover_percentage < 15
-                                ? 'text-emerald-700'
-                                : selectedScene.cloud_cover_percentage < 40
-                                ? 'text-amber-700'
-                                : 'text-red-700'
-                            }`}
-                          >
-                            {selectedScene.cloud_cover_percentage}%
-                          </span>
+                        <div className="flex justify-between gap-3">
+                          <dt>Tile cloud cover:</dt>
+                          <dd className="font-mono font-bold text-slate-900">{selectedScene.cloud_cover_percentage}%</dd>
                         </div>
-                        <div className="flex justify-between">
-                          <span>Image Clarity:</span>
-                          <span className="font-bold text-slate-800">10 meters (Sharp detail)</span>
+                        <div className="flex justify-between gap-3">
+                          <dt>Clear pixels in radius:</dt>
+                          <dd className="font-mono font-bold text-slate-900">
+                            {activeClip
+                              ? `${activeClip.stats.validCoveragePct.toFixed(1)}%`
+                              : clipLoading
+                              ? 'Calculating…'
+                              : 'Unavailable'}
+                          </dd>
                         </div>
-                        <div className="flex justify-between">
-                          <span>Quality:</span>
-                          <span className="font-semibold text-emerald-700">Clear ground surface</span>
-                        </div>
-                      </div>
+                        {activeClip && (
+                          <>
+                            <div className="flex justify-between gap-3">
+                              <dt>Cloud / shadow in radius:</dt>
+                              <dd className="font-mono text-slate-900">{activeClip.stats.cloudOrShadowPct.toFixed(1)}%</dd>
+                            </div>
+                            <div className="flex justify-between gap-3">
+                              <dt>Resolution:</dt>
+                              <dd className="text-slate-900">10 m bands · EPSG:{activeClip.epsg} → WGS84</dd>
+                            </div>
+                          </>
+                        )}
+                      </dl>
                     </div>
 
-                    {/* Quick NDVI Compute Button */}
+                    {/* NDVI result computed from the clipped bands */}
                     <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-xs space-y-3">
-                      <div className="flex items-center justify-between">
-                        <span className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
-                          <Activity className="w-4 h-4 text-emerald-600" />
-                          Crop Greenness & Health Check
-                        </span>
-                        <button
-                          type="button"
-                          onClick={() => handleComputeNdvi(selectedScene)}
-                          disabled={isProcessingNdvi}
-                          className="px-3 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-md text-xs font-semibold transition-colors cursor-pointer disabled:opacity-60"
-                        >
-                          {isProcessingNdvi ? 'Analyzing...' : 'Analyze Greenness'}
-                        </button>
-                      </div>
+                      <span className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                        <Activity className="w-4 h-4 text-emerald-600" />
+                        Crop Greenness (NDVI) within {searchedArea.radiusKm} km
+                      </span>
 
-                      {calculatedNdvi ? (
+                      {clipLoading && <p className="text-[11px] text-slate-500">Calculating from B04 / B08 reflectance…</p>}
+
+                      {!clipLoading && !activeClip && (
+                        <p className="text-[11px] text-slate-500">Unavailable — the band files for this scene could not be read.</p>
+                      )}
+
+                      {activeClip && activeClip.stats.ndviMean === null && (
+                        <p className="text-[11px] text-amber-700">
+                          Insufficient data: no clear pixels inside the search radius on this date (cloud, shadow or no
+                          data). Choose another pass.
+                        </p>
+                      )}
+
+                      {activeClip && activeClip.stats.ndviMean !== null && (
                         <div className="space-y-2 pt-2 border-t border-slate-100">
                           <div className="grid grid-cols-2 gap-2 text-xs">
                             <div className="p-2 rounded bg-emerald-50 border border-emerald-200">
-                              <span className="text-slate-500 block text-[10px]">Greenness Score</span>
+                              <span className="text-slate-500 block text-[10px]">Mean NDVI</span>
                               <span className="text-base font-bold text-emerald-900 font-mono">
-                                {calculatedNdvi.ndvi_mean.toFixed(3)}
+                                {activeClip.stats.ndviMean.toFixed(3)}
                               </span>
                             </div>
                             <div className="p-2 rounded bg-slate-50 border border-slate-200">
-                              <span className="text-slate-500 block text-[10px]">Crop Condition</span>
+                              <span className="text-slate-500 block text-[10px]">Vegetation density class</span>
                               <span className="text-xs font-bold text-slate-800">
-                                {calculatedNdvi.vegetation_classification}
+                                {classifyNdvi(activeClip.stats.ndviMean)}
                               </span>
                             </div>
                           </div>
-                          <p className="text-[11px] text-slate-500">
-                            Healthy crop growth detected at these coordinates with clear sky optical view.
+                          <dl className="grid grid-cols-3 gap-2 text-[11px] text-slate-600">
+                            <div>
+                              <dt className="text-[10px] text-slate-400">Median</dt>
+                              <dd className="font-mono">{activeClip.stats.ndviMedian?.toFixed(3)}</dd>
+                            </div>
+                            <div>
+                              <dt className="text-[10px] text-slate-400">Min</dt>
+                              <dd className="font-mono">{activeClip.stats.ndviMin?.toFixed(3)}</dd>
+                            </div>
+                            <div>
+                              <dt className="text-[10px] text-slate-400">Max</dt>
+                              <dd className="font-mono">{activeClip.stats.ndviMax?.toFixed(3)}</dd>
+                            </div>
+                          </dl>
+                          <p className="text-[10px] text-slate-500 leading-snug">
+                            Calculated measurement: NDVI = (B08 − B04) / (B08 + B04) over{' '}
+                            {activeClip.stats.validPixels.toLocaleString()} clear pixels (SCL cloud, shadow, cirrus, snow
+                            and no-data masked; {activeClip.reflectance.source}). Covers all land in the radius, not a
+                            single plot. A low value alone does not establish disease, nutrient deficiency or the cause
+                            of stress — confirm in the field.
                           </p>
+                          {activeClip.stats.validCoveragePct < 60 && (
+                            <p className="text-[10px] text-amber-700">
+                              Only {activeClip.stats.validCoveragePct.toFixed(0)}% of the radius is clear on this date;
+                              treat the value with caution.
+                            </p>
+                          )}
                         </div>
-                      ) : (
-                        <p className="text-[11px] text-slate-500">
-                          Click "Analyze Greenness" to evaluate crop health and vegetation density on this satellite pass.
-                        </p>
                       )}
                     </div>
+
                   </div>
                 </div>
               ) : null}
 
-              {/* Gallery of all scenes found in date range */}
-              <div>
-                <h4 className="text-xs font-bold text-slate-800 uppercase tracking-wider mb-2.5 flex items-center gap-1.5">
-                  <Calendar className="w-3.5 h-3.5 text-emerald-600" />
-                  Recent Satellite Passes for this Location
-                </h4>
-                <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-6 gap-2.5">
-                  {searchResults.scenes.map((scene) => {
-                    const isSelected = scene.scene_id === selectedScene?.scene_id;
-                    return (
-                      <div
-                        key={scene.id}
-                        onClick={() => setSelectedScene(scene)}
-                        className={`p-2 rounded-xl border transition-all cursor-pointer ${
-                          isSelected
-                            ? 'border-emerald-600 bg-emerald-50/50 ring-2 ring-emerald-600/20'
-                            : 'border-slate-200 bg-white hover:border-slate-300'
-                        }`}
-                      >
-                        <div className="aspect-square rounded-lg overflow-hidden bg-slate-100 mb-1.5 relative">
-                          <img
-                            src={scene.thumbnail_url || 'https://images.unsplash.com/photo-1500382017468-9049fed747ef?w=300&auto=format&fit=crop&q=80'}
-                            alt={scene.scene_id}
-                            className="w-full h-full object-cover"
-                          />
-                          <span className="absolute bottom-1 right-1 text-[9px] bg-black/70 text-white font-mono px-1 rounded">
-                            {scene.cloud_cover_percentage}% cloud
-                          </span>
-                        </div>
-                        <div className="text-[10px] font-bold text-slate-900 truncate">
-                          {scene.acquisition_datetime.slice(0, 10)}
-                        </div>
-                        <div className="text-[9px] text-slate-500 truncate">
-                          {scene.scene_id.slice(0, 18)}...
-                        </div>
-                      </div>
-                    );
-                  })}
+              {/* Sharpest real imagery of the searched location */}
+              {selectedScene && (
+                <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-xs space-y-2">
+                  <h4 className="text-xs font-bold text-slate-800 uppercase tracking-wider flex items-center gap-1.5">
+                    <Satellite className="w-3.5 h-3.5 text-emerald-600" />
+                    High-resolution satellite view (zoom in to field level)
+                  </h4>
+                  <HighResFieldMap
+                    center={{ lat: searchedArea.lat, lon: searchedArea.lon }}
+                    outline={fieldOutline({ kind: 'circle', center: { lat: searchedArea.lat, lon: searchedArea.lon }, radiusKm: searchedArea.radiusKm })}
+                    heightClass="h-[460px]"
+                    sentinelOverlay={
+                      activeClip && activeImageUrl
+                        ? { url: activeImageUrl, bounds: activeClip.bounds, label: selectedScene.acquisition_datetime.slice(0, 10) }
+                        : undefined
+                    }
+                  >
+                    <CircleMarker center={[searchedArea.lat, searchedArea.lon]} radius={5} pathOptions={{ color: '#facc15', weight: 2, fillOpacity: 0.9 }} />
+                  </HighResFieldMap>
                 </div>
-              </div>
+              )}
+
+              {/* Gallery of all scenes found in date range */}
+              {searchResults.scenes.length > 0 && (
+                <div>
+                  <h4 className="text-xs font-bold text-slate-800 uppercase tracking-wider mb-2.5 flex items-center gap-1.5">
+                    <Calendar className="w-3.5 h-3.5 text-emerald-600" />
+                    Satellite Passes for this Location (newest first)
+                  </h4>
+                  <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-6 gap-2.5">
+                    {searchResults.scenes.map((scene) => {
+                      const isSelected = scene.scene_id === selectedScene?.scene_id;
+                      return (
+                        <button
+                          type="button"
+                          key={scene.id}
+                          onClick={() => setSelectedScene(scene)}
+                          aria-pressed={isSelected}
+                          className={`p-2 rounded-xl border text-left transition-all cursor-pointer ${
+                            isSelected
+                              ? 'border-emerald-600 bg-emerald-50/50 ring-2 ring-emerald-600/20'
+                              : 'border-slate-200 bg-white hover:border-slate-300'
+                          }`}
+                        >
+                          <div className="aspect-square rounded-lg overflow-hidden bg-slate-100 mb-1.5 relative">
+                            {scene.thumbnail_url ? (
+                              <img src={scene.thumbnail_url} alt={`Tile preview ${scene.scene_id}`} className="w-full h-full object-cover" loading="lazy" />
+                            ) : (
+                              <div className="w-full h-full flex items-center justify-center text-[10px] text-slate-400">No preview</div>
+                            )}
+                            <span className="absolute bottom-1 right-1 text-[9px] bg-black/70 text-white font-mono px-1 rounded">
+                              {scene.cloud_cover_percentage}% cloud
+                            </span>
+                          </div>
+                          <div className="text-[10px] font-bold text-slate-900 truncate">
+                            {scene.acquisition_datetime.slice(0, 10)}
+                            {isSelected ? ' · selected' : ''}
+                          </div>
+                          <div className="text-[9px] text-slate-500 truncate">{scene.mgrs_tile || scene.scene_id}</div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <p className="text-[10px] text-slate-400 mt-1.5">Thumbnails preview the whole ~110 km tile; select one to load your area at 10 m.</p>
+                </div>
+              )}
             </div>
           )}
         </div>
 
         {/* Modal Footer */}
         <div className="p-4 bg-slate-50 border-t border-slate-200 flex items-center justify-between text-xs text-slate-500 shrink-0">
-          <span>Coordinates: {latitude}° N, {longitude}° E (Pune Division)</span>
+          <span>
+            {searchedArea
+              ? `Searched: ${formatCoord(searchedArea.lat, searchedArea.lon)} · radius ${searchedArea.radiusKm} km`
+              : 'Enter coordinates and fetch imagery'}
+          </span>
           <button
             type="button"
             onClick={onClose}
@@ -712,27 +863,32 @@ export const TahsildarSatelliteCoordinateModal: React.FC<TahsildarSatelliteCoord
         </div>
       </div>
 
-      {/* Expanded Satellite Image Modal */}
-      {expandedImageModalUrl && (
+      {/* Expanded Satellite Image */}
+      {isExpanded && activeImageUrl && (
         <div
-          className="fixed inset-0 z-60 bg-black/80 flex items-center justify-center p-4"
-          onClick={() => setExpandedImageModalUrl(null)}
+          className="fixed inset-0 z-60 bg-black/85 flex items-center justify-center p-4"
+          onClick={() => setIsExpanded(false)}
         >
-          <div className="relative max-w-4xl max-h-[85vh] bg-black rounded-2xl overflow-hidden shadow-2xl p-2 border border-slate-700">
+          <div className="relative max-w-[90vmin] w-full bg-black rounded-2xl overflow-hidden shadow-2xl p-2 border border-slate-700">
             <button
-              onClick={() => setExpandedImageModalUrl(null)}
+              type="button"
+              onClick={() => setIsExpanded(false)}
               className="absolute top-4 right-4 z-10 p-2 bg-black/60 rounded-full text-white hover:bg-black"
+              aria-label="Close expanded image"
             >
               <X className="w-5 h-5" />
             </button>
-            <img
-              src={expandedImageModalUrl}
-              alt="Expanded Satellite Scene"
-              className="w-full h-auto max-h-[80vh] object-contain rounded-xl"
-            />
+            <img src={activeImageUrl} alt={`Expanded Sentinel-2 ${modeLabel}`} className="w-full h-auto rounded-xl" />
+            <p className="text-[11px] text-slate-300 px-2 py-1.5 font-mono">
+              {selectedScene?.scene_id} · {modeLabel} · acquired {selectedScene?.acquisition_datetime.slice(0, 10)}
+            </p>
           </div>
         </div>
       )}
     </div>
   );
 };
+
+// Mount the content only while open so its hooks always run in the same order.
+export const TahsildarSatelliteCoordinateModal: React.FC<TahsildarSatelliteCoordinateModalProps> = (props) =>
+  props.isOpen ? <TahsildarSatelliteCoordinateModalContent {...props} /> : null;

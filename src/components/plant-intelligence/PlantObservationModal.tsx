@@ -5,7 +5,6 @@ import {
   Activity,
   FileCheck2,
   AlertCircle,
-  Sparkles,
   Info,
   CheckCircle2,
   Thermometer,
@@ -41,7 +40,6 @@ export const PlantObservationModal: React.FC<PlantObservationModalProps> = ({
   const [selectedPhotoUrl, setSelectedPhotoUrl] = useState<string>(
     'https://images.unsplash.com/photo-1592982537447-7440770cbfc9?auto=format&fit=crop&w=800&q=80'
   );
-  const [aiAnalysisEnabled, setAiAnalysisEnabled] = useState(true);
 
   // Method B (Sensor) State
   const [sensorParams, setSensorParams] = useState({
@@ -68,30 +66,7 @@ export const PlantObservationModal: React.FC<PlantObservationModalProps> = ({
 
     try {
       if (activeMethod === 'image') {
-        // Method A: Image-based observation with AI prediction estimation
-        const aiPrediction = aiAnalysisEnabled
-          ? {
-              condition: wiltingObserved ? 'Vegetative Foliar Stress' : 'Vigorous Vegetative Stand',
-              confidence: 88,
-              potential_diseases: wiltingObserved
-                ? [{ name: 'Abiotic Drought Wilt', probability: 0.85 }]
-                : [],
-              nutrient_deficiencies:
-                leafDiscoloration === 'Chlorosis (Yellowing)'
-                  ? [{ nutrient: 'Nitrogen (N) Deficiency', likelihood: 'High' as const }]
-                  : [],
-              pest_damage_detected: pestObserved,
-              symptoms_detected: [
-                `${photoCategory.toUpperCase()} foliar capture`,
-                leafDiscoloration && leafDiscoloration !== 'None'
-                  ? leafDiscoloration
-                  : 'Uniform chlorophyll absorbance',
-              ],
-              disclaimer:
-                'AI prediction based on visible foliar symptoms. This is an estimated indicator and not a definitive laboratory diagnosis.',
-            }
-          : undefined;
-
+        // Method A: photograph + the observer's own findings (no automated image analysis exists)
         await plantIntelligenceService.recordObservation({
           monitoringUnitId: unit.id,
           propertyId: unit.property_id,
@@ -115,7 +90,6 @@ export const PlantObservationModal: React.FC<PlantObservationModalProps> = ({
           pestDetails: pestObserved ? pestDetails : undefined,
           visibleDiseaseSymptoms: visibleSymptoms || undefined,
           generalNotes: generalNotes || undefined,
-          aiPrediction,
         });
       } else if (activeMethod === 'sensor') {
         // Method B: Telemetry ingestion
@@ -295,33 +269,13 @@ export const PlantObservationModal: React.FC<PlantObservationModalProps> = ({
               />
             </div>
 
-            {/* AI Vision Service Integration */}
-            <div className="p-3.5 bg-gradient-to-r from-emerald-50 to-teal-50 border border-emerald-200 rounded-xl space-y-2">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-bold text-emerald-950 flex items-center gap-1.5">
-                  <Sparkles className="w-4 h-4 text-emerald-600" />
-                  AgriSurvey Plant Vision AI Model (v1.2)
-                </span>
-                <label className="flex items-center gap-1.5 text-xs text-emerald-800 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={aiAnalysisEnabled}
-                    onChange={(e) => setAiAnalysisEnabled(e.target.checked)}
-                    className="rounded text-emerald-600"
-                  />
-                  <span>Run AI estimation</span>
-                </label>
-              </div>
-              <p className="text-[11px] text-slate-600 leading-relaxed">
-                Estimates visible foliar conditions, potential diseases, and chlorosis indicators with confidence scores.
-              </p>
-              <div className="p-2 bg-amber-50/80 border border-amber-200/60 rounded-md text-[10px] text-amber-900 leading-snug flex items-start gap-1.5">
-                <Info className="w-3.5 h-3.5 text-amber-600 shrink-0 mt-0.5" />
-                <span>
-                  <strong>Scientific Disclaimer:</strong> AI visual predictions provide estimated agronomic indicators and confidence levels. They do not constitute a definitive laboratory pathology diagnosis.
-                </span>
-              </div>
-            </div>
+            <p className="text-[11px] text-slate-600 bg-slate-50 border border-slate-200 rounded-lg p-2.5 flex items-start gap-1.5">
+              <Info className="w-3.5 h-3.5 text-slate-500 shrink-0 mt-0.5" />
+              <span>
+                The photograph is stored as evidence with your findings above. It is not analysed automatically: no
+                plant-disease image model has been trained or validated for this platform yet.
+              </span>
+            </p>
           </div>
         )}
 

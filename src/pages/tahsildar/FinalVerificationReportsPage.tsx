@@ -35,10 +35,26 @@ export const FinalVerificationReportsPage: React.FC = () => {
   const [reports, setReports] = useState<VerificationReport[]>([]);
   const [selectedReport, setSelectedReport] = useState<VerificationReport | null>(null);
   const [compileModalOpen, setCompileModalOpen] = useState(false);
-  const [finalStatus, setFinalStatus] = useState<FinalVerificationStatus>('VERIFIED');
-  const [discrepanciesText, setDiscrepanciesText] = useState(
-    'Negligible 0.02 acre buffer variation on western boundary hedge with adjacent cart-track. No boundary encroachment.'
-  );
+  const [finalStatus, setFinalStatus] = useState<FinalVerificationStatus | ''>('');
+  const [discrepanciesText, setDiscrepanciesText] = useState('');
+  const [compileError, setCompileError] = useState<string | null>(null);
+
+  // Applications that have reached review, with the evidence a report would cite
+  const candidateApps = mockDb.applications
+    .filter((a) => a.status === 'APPROVED' || mockDb.comparisons.some((c) => c.application_id === a.id))
+    .map((a) => {
+      const hasFile = (r: { media_id?: string; image_url?: string }) => Boolean(r.media_id || r.image_url);
+      return {
+        app: a,
+        property: mockDb.properties.find((p) => p.id === a.property_id),
+        farmer: mockDb.profiles.find((p) => p.id === a.farmer_id),
+        groundPhotos: mockDb.landImages.filter((i) => i.application_id === a.id && hasFile(i)).length,
+        dronePhotos: mockDb.droneImagery.filter((i) => i.application_id === a.id && hasFile(i)).length,
+        comparison: mockDb.comparisons.find((c) => c.application_id === a.id),
+      };
+    });
+  const [compileAppId, setCompileAppId] = useState<string>(candidateApps[0]?.app.id ?? '');
+  const compileTarget = candidateApps.find((c) => c.app.id === compileAppId) ?? null;
   const [isCompiling, setIsCompiling] = useState(false);
 
   useEffect(() => {
@@ -58,20 +74,18 @@ export const FinalVerificationReportsPage: React.FC = () => {
   };
 
   const handleCompileNewReport = async () => {
+    if (!compileTarget || !finalStatus) {
+      setCompileError('Select an application and a final status.');
+      return;
+    }
+    setCompileError(null);
     setIsCompiling(true);
     try {
       const rep = await reportService.finalizeReport({
-        applicationId: 'app-01',
-        propertyId: 'prop-01',
+        applicationId: compileTarget.app.id,
+        propertyId: compileTarget.app.property_id,
         finalStatus,
         discrepancies: discrepanciesText,
-        findings: {
-          boundaries_verified: true,
-          crop_matching: true,
-          similarity_score: 93.4,
-          crop_verified: 'Sugarcane (ऊस)',
-          irrigation_verified: 'Drip Irrigation',
-        },
       });
 
       setIsCompiling(false);
@@ -287,11 +301,24 @@ export const FinalVerificationReportsPage: React.FC = () => {
             <label className="block font-semibold text-slate-700 mb-1">
               {tl('selectAppToFinalizeLabel')}
             </label>
-            <select className="w-full p-2.5 rounded-lg border border-slate-300 bg-white">
-              <option value="app-01">
-                AGRI-APP-2026-849102 • Ramesh Patil • {language === 'mr' ? 'गट क्र.' : 'Survey'} 142/2A Wagholi ({language === 'mr' ? 'अंतिम मंजुरीसाठी सज्ज' : 'Ready for Finalization'})
-              </option>
+            <select
+              value={compileAppId}
+              onChange={(e) => setCompileAppId(e.target.value)}
+              className="w-full p-2.5 rounded-lg border border-slate-300 bg-white"
+            >
+              {candidateApps.length === 0 && <option value="">No applications ready for a report</option>}
+              {candidateApps.map(({ app, property, farmer }) => (
+                <option key={app.id} value={app.id}>
+                  {app.application_reference} • {farmer?.full_name ?? 'Farmer'} • {language === 'mr' ? 'गट क्र.' : 'Survey'} {property?.survey_number ?? '—'} {property?.village ?? ''}
+                </option>
+              ))}
             </select>
+            {compileTarget && (
+              <p className="mt-1.5 text-[11px] text-slate-600">
+                Evidence on record: {compileTarget.groundPhotos} ground photo(s), {compileTarget.dronePhotos} drone photo(s), image comparison{' '}
+                <strong>{compileTarget.comparison?.comparison_result ?? 'not recorded'}</strong>.
+              </p>
+            )}
           </div>
 
           <div>
@@ -300,9 +327,10 @@ export const FinalVerificationReportsPage: React.FC = () => {
             </label>
             <select
               value={finalStatus}
-              onChange={(e) => setFinalStatus(e.target.value as any)}
+              onChange={(e) => setFinalStatus(e.target.value as FinalVerificationStatus | '')}
               className="w-full p-2.5 rounded-lg border border-slate-300 bg-white"
             >
+              <option value="">— Select the final status —</option>
               <option value="VERIFIED">{getStatusLabel('VERIFIED', language)} ({language === 'mr' ? 'पुरावे पूर्णपणे जुळतात' : 'Evidence fully corresponds'})</option>
               <option value="ADDITIONAL_EVIDENCE_REQUIRED">{getStatusLabel('ADDITIONAL_EVIDENCE_REQUIRED', language)}</option>
               <option value="REINSPECTION_REQUIRED">{getStatusLabel('REINSPECTION_REQUIRED', language)}</option>
@@ -316,21 +344,30 @@ export const FinalVerificationReportsPage: React.FC = () => {
             </label>
             <textarea
               rows={3}
-              value={
-                language === 'mr' && discrepanciesText.includes('Negligible 0.02 acre buffer variation')
-                  ? 'पश्चिम बांधालगतच्या पाणंद रस्त्याशी केवळ ०.०२ एकर किरकोळ तफावत. कोणतीही सीमा अतिक्रमण नाही.'
-                  : discrepanciesText
-              }
+              value={discrepanciesText}
+              placeholder="Record the discrepancies you found, or state that none were found."
               onChange={(e) => setDiscrepanciesText(e.target.value)}
               className="w-full p-2.5 rounded-lg border border-slate-300 bg-white text-slate-900"
             />
           </div>
 
+          {finalStatus === 'VERIFIED' && compileTarget && compileTarget.comparison?.comparison_result !== 'CONSISTENT' && (
+            <p className="text-amber-800 bg-amber-50 border border-amber-200 rounded-lg p-2">
+              No image comparison has been recorded as consistent for this application. Review the evidence in the Image
+              Comparison Workspace before marking it verified.
+            </p>
+          )}
+          {compileError && (
+            <p role="alert" className="text-red-700 bg-red-50 border border-red-200 rounded-lg p-2">
+              {compileError}
+            </p>
+          )}
+
           <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-100">
             <Button variant="ghost" onClick={() => setCompileModalOpen(false)}>
               {tl('cancelBtn')}
             </Button>
-            <Button onClick={handleCompileNewReport} isLoading={isCompiling}>
+            <Button onClick={handleCompileNewReport} isLoading={isCompiling} disabled={!compileTarget || !finalStatus}>
               {tl('compileSignReportBtn')}
             </Button>
           </div>

@@ -30,13 +30,12 @@ interface SatelliteSearchModalProps {
   onNdviCalculated?: (obs: VegetationIndexObservation) => void;
 }
 
-export const SatelliteSearchModal: React.FC<SatelliteSearchModalProps> = ({
+const SatelliteSearchModalContent: React.FC<SatelliteSearchModalProps> = ({
   plot,
   isOpen,
   onClose,
   onNdviCalculated,
 }) => {
-  if (!isOpen) return null;
 
   const [startDate, setStartDate] = useState<string>('2026-05-01');
   const [endDate, setEndDate] = useState<string>('2026-10-26');
@@ -326,3 +325,7 @@ export const SatelliteSearchModal: React.FC<SatelliteSearchModalProps> = ({
     </div>
   );
 };
+
+// Mount the content only while open so its hooks always run in the same order.
+export const SatelliteSearchModal: React.FC<SatelliteSearchModalProps> = (props) =>
+  props.isOpen ? <SatelliteSearchModalContent {...props} /> : null;

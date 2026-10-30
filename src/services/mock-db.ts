@@ -543,9 +543,9 @@ const INITIAL_CROP_VERIFICATIONS: CropVerification[] = [
     approximate_cultivated_area: 3.45,
     irrigation_method: 'Drip Irrigation',
     verification_result: 'MATCHES',
-    ai_prediction: 'Sugarcane (Saccharum officinarum)',
-    ai_confidence: 94.8,
-    ai_model_version: 'AgriCropNet-ResNet50-v3.2',
+    ai_prediction: null,
+    ai_confidence: null,
+    ai_model_version: null,
     reviewer_notes: 'Confirmed by Tahsildar Anand Kulkarni: Stand is 5-6 month old high-density sugarcane matching declaration and drone spectral reflectance.',
     verified_by: 'usr-tahsildar-01',
     verified_at: '2026-02-20T15:10:00Z',
@@ -870,15 +870,6 @@ const INITIAL_PLANT_OBSERVATIONS: PlantObservation[] = [
         uploaded_at: '2026-10-21T15:30:00Z',
       },
     ],
-    ai_prediction: {
-      condition: 'Normal Vigorous Growth',
-      confidence: 94,
-      potential_diseases: [],
-      nutrient_deficiencies: [],
-      pest_damage_detected: false,
-      symptoms_detected: ['Healthy chlorophyll absorbance', 'No foliar lesions'],
-      disclaimer: 'AI prediction based on visible foliar symptoms. This is an estimated indicator and not a definitive laboratory diagnosis.',
-    },
     created_at: '2026-10-21T15:30:00Z',
   },
   {
@@ -906,15 +897,6 @@ const INITIAL_PLANT_OBSERVATIONS: PlantObservation[] = [
         uploaded_at: '2026-10-22T08:45:00Z',
       },
     ],
-    ai_prediction: {
-      condition: 'Acute Abiotic Water Stress',
-      confidence: 89,
-      potential_diseases: [{ name: 'Foliar Dehydration Shock', probability: 0.88 }],
-      nutrient_deficiencies: [{ nutrient: 'Nitrogen (drought-induced immobility)', likelihood: 'Moderate' }],
-      pest_damage_detected: false,
-      symptoms_detected: ['Inward leaf rolling', 'Basal leaf yellowing'],
-      disclaimer: 'AI prediction based on visible foliar symptoms. This is an estimated indicator and not a definitive laboratory diagnosis.',
-    },
     created_at: '2026-10-22T08:45:00Z',
   },
 ];
@@ -938,8 +920,8 @@ const INITIAL_PLANT_ASSESSMENTS: PlantHealthAssessment[] = [
     possible_concerns: ['No acute physiological concerns detected.'],
     suggested_next_steps: ['Maintain current irrigation schedule and fertigation baseline.'],
     data_freshness: 'Updated 29 minutes ago',
-    confidence: 94,
-    assessment_method: 'AgriSurvey Agronomic Rules Engine v2.4 + Vision AI v1.2',
+    confidence: null,
+    assessment_method: 'AgriSurvey Agronomic Rules Engine v2.4',
     model_version: 'v2.4.2-pune-rules',
     is_preliminary: false,
     created_at: '2026-10-22T09:20:00Z',
@@ -959,7 +941,7 @@ const INITIAL_PLANT_ASSESSMENTS: PlantHealthAssessment[] = [
     possible_concerns: ['Mild vegetative moisture deficit beginning to limit daily stalk elongation.'],
     suggested_next_steps: ['Increase drip cycle duration by 45 minutes over next 24 hours.'],
     data_freshness: 'Updated 39 minutes ago',
-    confidence: 91,
+    confidence: null,
     assessment_method: 'AgriSurvey Agronomic Rules Engine v2.4',
     model_version: 'v2.4.2-pune-rules',
     is_preliminary: false,
@@ -987,8 +969,8 @@ const INITIAL_PLANT_ASSESSMENTS: PlantHealthAssessment[] = [
       'Flush and unblock drip lateral 4 immediately; irrigate zone for 3.5 hours continuously.',
     ],
     data_freshness: 'Updated 44 minutes ago',
-    confidence: 96,
-    assessment_method: 'AgriSurvey Agronomic Rules Engine v2.4 + Vision AI v1.2',
+    confidence: null,
+    assessment_method: 'AgriSurvey Agronomic Rules Engine v2.4',
     model_version: 'v2.4.2-pune-rules',
     is_preliminary: false,
     created_at: '2026-10-22T09:05:00Z',
@@ -1290,84 +1272,14 @@ const INITIAL_MOBILE_SURVEYS: MobileFieldSurveyRecord[] = [
   },
 ];
 
-const INITIAL_CROP_PREDICTIONS: CropPredictionRecord[] = [
-  {
-    id: 'pred-01',
-    plot_id: 'plot-01',
-    predicted_crop: 'Sugarcane',
-    confidence_score: 94.8,
-    class_probabilities: {
-      Sugarcane: 94.8,
-      Rice: 3.2,
-      Soybean: 1.4,
-      Cotton: 0.6,
-    },
-    model_version: 'MH-CROP-RF-v2.3 (Random Forest Ensemble)',
-    features_analyzed: {
-      ndvi_mean: 0.68,
-      ndwi: -0.24,
-      b02_blue: 0.045,
-      b03_green: 0.082,
-      b04_red: 0.065,
-      b08_nir: 0.42,
-      season: 'Perennial / Adsali 2026',
-    },
-    verified_crop: 'Sugarcane',
-    verification_status: 'CONFIRMED',
-    reviewer_name: 'Anand Shrikant Kulkarni (Tahsildar)',
-    reviewer_notes: 'Confirmed by Tahsildar Anand Kulkarni: High-vigor cane stand matches 7/12 declaration.',
-    reviewed_at: '2026-10-23T11:00:00Z',
-    created_at: '2026-10-20T10:00:00Z',
-  },
-];
+// Crop predictions are produced from real satellite series; none are seeded.
+const INITIAL_CROP_PREDICTIONS: CropPredictionRecord[] = [];
 
-const INITIAL_YIELD_FORECASTS: YieldForecastRecord[] = [
-  {
-    id: 'yf-01',
-    plot_id: 'plot-01',
-    crop_type: 'Sugarcane',
-    cultivated_area_hectares: 1.408,
-    estimated_yield_tonnes_per_ha: 92.5,
-    estimated_total_tonnes: 130.2,
-    historical_baseline_tonnes_per_ha: 88.5,
-    deviation_percentage: 4.5,
-    water_source_factor: 1.08,
-    rainfall_anomaly_factor: 1.02,
-    ndvi_canopy_factor: 1.05,
-    uncertainty_range_tonnes: { min: 114.6, max: 145.8 },
-    model_type: 'Historical Baseline + Environmental Calibration',
-    data_sources: [
-      'Maharashtra Commissionerate of Agriculture Historical Baselines',
-      'Sentinel-2 L2A Top-of-Canopy NDVI',
-      'Open-Meteo High-Resolution Precipitation Index',
-    ],
-    forecast_date: '2026-10-24T10:00:00Z',
-  },
-];
+// Yield scenarios are created from officer inputs; none are seeded.
+const INITIAL_YIELD_FORECASTS: YieldForecastRecord[] = [];
 
-const INITIAL_DISASTER_ASSESSMENTS: DisasterAssessmentRecord[] = [
-  {
-    id: 'dis-01',
-    event_reference: 'DIS-PUN-2026-104',
-    event_name: 'Post-Monsoon Heavy Inundation Assessment',
-    event_type: 'HEAVY_RAINFALL_FLOOD',
-    plot_id: 'plot-01',
-    pre_event_date: '2026-10-05',
-    post_event_date: '2026-10-20',
-    pre_event_ndvi: 0.71,
-    post_event_ndvi: 0.68,
-    ndvi_change_delta: -0.03,
-    affected_area_sqm: 420,
-    affected_area_hectares: 0.042,
-    affected_area_acres: 0.104,
-    affected_percentage: 3.0,
-    damage_severity: 'NEGLIGIBLE',
-    inspection_priority: 'ROUTINE',
-    verification_status: 'PRELIMINARY_AI_OBSERVATION',
-    surveyor_notes: 'Minor pooling near eastern ditch boundary. Drainage functioning adequately with negligible vegetative impact.',
-    assessed_at: '2026-10-24T10:00:00Z',
-  },
-];
+// Disaster screenings are produced from real pre/post satellite passes; none are seeded.
+const INITIAL_DISASTER_ASSESSMENTS: DisasterAssessmentRecord[] = [];
 
 const INITIAL_MONITORING_AREAS: MonitoringArea[] = [
   {
@@ -1473,17 +1385,6 @@ const INITIAL_PERIOD_OBSERVATIONS: MonitoringPeriodObservation[] = [
     delta_ndmi_previous: null,
     delta_direction: 'FIRST_PERIOD',
     change_summary: 'Baseline sowing & germination emergence detected. Healthy initial vigor.',
-    crop_prediction: {
-      crop_name: 'Sugarcane',
-      confidence: 88.5,
-      ranking: [
-        { crop: 'Sugarcane', fit: 88.5 },
-        { crop: 'Soybean', fit: 6.2 },
-        { crop: 'Cotton', fit: 3.1 },
-      ],
-      needs_field_check: false,
-      model_version: 'GM-ML-V2-LightGBM-158feat',
-    },
     processed_at: '2026-06-11T04:20:00Z',
   },
   {
@@ -1523,17 +1424,6 @@ const INITIAL_PERIOD_OBSERVATIONS: MonitoringPeriodObservation[] = [
     delta_ndmi_previous: 0.12,
     delta_direction: 'INCREASED',
     change_summary: 'NDVI +0.11 expansion. Rapid vegetative tillering and leaf area development.',
-    crop_prediction: {
-      crop_name: 'Sugarcane',
-      confidence: 90.2,
-      ranking: [
-        { crop: 'Sugarcane', fit: 90.2 },
-        { crop: 'Soybean', fit: 5.5 },
-        { crop: 'Cotton', fit: 2.8 },
-      ],
-      needs_field_check: false,
-      model_version: 'GM-ML-V2-LightGBM-158feat',
-    },
     processed_at: '2026-06-26T04:15:00Z',
   },
   {
@@ -1653,17 +1543,6 @@ const INITIAL_PERIOD_OBSERVATIONS: MonitoringPeriodObservation[] = [
     delta_ndmi_previous: 0.14,
     delta_direction: 'INCREASED',
     change_summary: 'Clear sky gap acquisition. Strong canopy growth observed since late June.',
-    crop_prediction: {
-      crop_name: 'Sugarcane',
-      confidence: 91.8,
-      ranking: [
-        { crop: 'Sugarcane', fit: 91.8 },
-        { crop: 'Cotton', fit: 4.8 },
-        { crop: 'Soybean', fit: 2.1 },
-      ],
-      needs_field_check: false,
-      model_version: 'GM-ML-V2-LightGBM-158feat',
-    },
     processed_at: '2026-08-11T05:00:00Z',
   },
   {
@@ -1703,17 +1582,6 @@ const INITIAL_PERIOD_OBSERVATIONS: MonitoringPeriodObservation[] = [
     delta_ndmi_previous: 0.06,
     delta_direction: 'INCREASED',
     change_summary: 'NDVI +0.09 expansion. Reaching peak canopy biomass and dense stalk formation.',
-    crop_prediction: {
-      crop_name: 'Sugarcane',
-      confidence: 93.4,
-      ranking: [
-        { crop: 'Sugarcane', fit: 93.4 },
-        { crop: 'Cotton', fit: 3.9 },
-        { crop: 'Soybean', fit: 1.5 },
-      ],
-      needs_field_check: false,
-      model_version: 'GM-ML-V2-LightGBM-158feat',
-    },
     processed_at: '2026-08-29T05:00:00Z',
   },
   {
@@ -1753,17 +1621,6 @@ const INITIAL_PERIOD_OBSERVATIONS: MonitoringPeriodObservation[] = [
     delta_ndmi_previous: 0.04,
     delta_direction: 'INCREASED',
     change_summary: 'Peak vegetative vigor achieved. Strong moisture indices (NDMI 0.48).',
-    crop_prediction: {
-      crop_name: 'Sugarcane',
-      confidence: 94.8,
-      ranking: [
-        { crop: 'Sugarcane', fit: 94.8 },
-        { crop: 'Cotton', fit: 3.2 },
-        { crop: 'Soybean', fit: 1.1 },
-      ],
-      needs_field_check: false,
-      model_version: 'GM-ML-V2-LightGBM-158feat',
-    },
     processed_at: '2026-09-13T04:30:00Z',
   },
   {
@@ -1803,17 +1660,6 @@ const INITIAL_PERIOD_OBSERVATIONS: MonitoringPeriodObservation[] = [
     delta_ndmi_previous: -0.04,
     delta_direction: 'STABLE',
     change_summary: 'NDVI plateau consistent with perennial cane maturation stage.',
-    crop_prediction: {
-      crop_name: 'Sugarcane',
-      confidence: 94.2,
-      ranking: [
-        { crop: 'Sugarcane', fit: 94.2 },
-        { crop: 'Cotton', fit: 3.5 },
-        { crop: 'Soybean', fit: 1.2 },
-      ],
-      needs_field_check: false,
-      model_version: 'GM-ML-V2-LightGBM-158feat',
-    },
     processed_at: '2026-09-28T04:30:00Z',
   },
   {
@@ -1853,17 +1699,6 @@ const INITIAL_PERIOD_OBSERVATIONS: MonitoringPeriodObservation[] = [
     delta_ndmi_previous: -0.03,
     delta_direction: 'STABLE',
     change_summary: 'Stable canopy metrics. Post-monsoon clear atmosphere.',
-    crop_prediction: {
-      crop_name: 'Sugarcane',
-      confidence: 93.8,
-      ranking: [
-        { crop: 'Sugarcane', fit: 93.8 },
-        { crop: 'Cotton', fit: 3.8 },
-        { crop: 'Soybean', fit: 1.3 },
-      ],
-      needs_field_check: false,
-      model_version: 'GM-ML-V2-LightGBM-158feat',
-    },
     processed_at: '2026-10-11T04:30:00Z',
   },
   {
@@ -1903,17 +1738,6 @@ const INITIAL_PERIOD_OBSERVATIONS: MonitoringPeriodObservation[] = [
     delta_ndmi_previous: -0.02,
     delta_direction: 'STABLE',
     change_summary: 'Latest 15-day composite. Excellent biomass profile and healthy canopy continuity.',
-    crop_prediction: {
-      crop_name: 'Sugarcane',
-      confidence: 93.5,
-      ranking: [
-        { crop: 'Sugarcane', fit: 93.5 },
-        { crop: 'Cotton', fit: 4.1 },
-        { crop: 'Soybean', fit: 1.4 },
-      ],
-      needs_field_check: false,
-      model_version: 'GM-ML-V2-LightGBM-158feat',
-    },
     processed_at: '2026-10-25T11:30:00Z',
   },
 ];
@@ -2067,9 +1891,18 @@ export class MockDatabase {
     this.weatherObservations = getStorage('weatherObservations', INITIAL_WEATHER_OBSERVATIONS);
     this.droneMissions = getStorage('droneMissions', INITIAL_DRONE_MISSIONS);
     this.mobileSurveys = getStorage('mobileSurveys', INITIAL_MOBILE_SURVEYS);
-    this.cropPredictions = getStorage('cropPredictions', INITIAL_CROP_PREDICTIONS);
-    this.yieldForecasts = getStorage('yieldForecasts', INITIAL_YIELD_FORECASTS);
-    this.disasterAssessments = getStorage('disasterAssessments', INITIAL_DISASTER_ASSESSMENTS);
+    // Drop records from the former simulated classifier (no verdict, invented confidence)
+    this.cropPredictions = getStorage('cropPredictions', INITIAL_CROP_PREDICTIONS).filter(
+      (p) => typeof (p as Partial<CropPredictionRecord>).verdict_status === 'string'
+    );
+    // Drop records from the former calibration-factor "forecast" (invented multipliers)
+    this.yieldForecasts = getStorage('yieldForecasts', INITIAL_YIELD_FORECASTS).filter(
+      (y) => (y as Partial<YieldForecastRecord>).estimate_kind === 'SCENARIO'
+    );
+    // Drop assessments from the former simulated screening (no satellite evidence recorded)
+    this.disasterAssessments = getStorage('disasterAssessments', INITIAL_DISASTER_ASSESSMENTS).filter(
+      (d) => typeof (d as Partial<DisasterAssessmentRecord>).method === 'string'
+    );
 
     // Continuous 15-Day Satellite Monitoring Collections
     this.monitoringAreas = getStorage('monitoringAreas', INITIAL_MONITORING_AREAS);

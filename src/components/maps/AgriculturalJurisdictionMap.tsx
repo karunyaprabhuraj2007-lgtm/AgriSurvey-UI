@@ -48,7 +48,7 @@ export const AgriculturalJurisdictionMap: React.FC<AgriculturalJurisdictionMapPr
   };
 
   return (
-    <div className="relative rounded-2xl overflow-hidden border border-slate-200 shadow-xs bg-slate-100">
+    <div className="relative isolate rounded-2xl overflow-hidden border border-slate-200 shadow-xs bg-slate-100">
       <div style={{ height }}>
         <MapContainer
           center={center}

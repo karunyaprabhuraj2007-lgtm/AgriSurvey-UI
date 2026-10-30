@@ -300,7 +300,7 @@ export const TahsildarOverviewPage: React.FC = () => {
                   <Sprout className="w-5 h-5" />
                 </div>
                 <Badge variant="success" className="text-[10px]">
-                  LightGBM ML 93%
+                  Officer verified
                 </Badge>
               </div>
               <h4 className="font-bold text-slate-900 mt-3 group-hover:text-emerald-700 transition-colors flex items-center gap-1.5 text-sm">

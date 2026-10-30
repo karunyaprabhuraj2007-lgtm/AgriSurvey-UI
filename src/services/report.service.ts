@@ -4,6 +4,51 @@ import { mockDb } from './mock-db';
 import { notificationService } from './notification.service';
 import { firebaseService } from './firebase.service';
 import { VerificationReport, FinalVerificationStatus } from '@/types';
+import { MODEL_VERSION, cropClassificationService, cropLabel } from './crop-classification.service';
+import { METHOD_NAME } from '@/lib/crop-phenology';
+
+const hasFile = (r: { media_id?: string; image_url?: string }) => Boolean(r.media_id || r.image_url);
+const latestDate = (dates: (string | null | undefined)[]) =>
+  dates.filter((d): d is string => Boolean(d)).sort().slice(-1)[0]?.slice(0, 10) ?? '';
+
+function compileFindings(applicationId: string, propertyId: string): Record<string, any> {
+  const ground = mockDb.landImages.filter((i) => i.application_id === applicationId);
+  const drone = mockDb.droneImagery.filter((i) => i.application_id === applicationId);
+  const comparison = mockDb.comparisons.find((c) => c.application_id === applicationId);
+  const crop = mockDb.cropVerifications.find((c) => c.application_id === applicationId);
+  const property = mockDb.properties.find((p) => p.id === propertyId);
+  return {
+    ground_photos: ground.filter(hasFile).length,
+    ground_photos_with_gps: ground.filter((i) => hasFile(i) && i.latitude !== null).length,
+    drone_photos: drone.filter(hasFile).length,
+    drone_photos_with_gps: drone.filter((i) => hasFile(i) && i.latitude !== null).length,
+    sample_records_without_files: [...ground, ...drone].filter((i) => !hasFile(i)).length,
+    image_comparison: comparison?.comparison_result ?? 'NOT_RECORDED',
+    image_comparison_notes: comparison?.review_notes ?? null,
+    declared_area: property?.land_area ?? null,
+    declared_crop: crop?.declared_crop_type ?? null,
+    observed_crop: crop?.observed_crop_type ?? null,
+    crop_verification: crop?.verification_result ?? 'NOT_RECORDED',
+    irrigation_verified: crop?.irrigation_method ?? null,
+  };
+}
+
+function compileEvidence(applicationId: string): VerificationReport['supporting_evidence'] {
+  const ground = mockDb.landImages.filter((i) => i.application_id === applicationId && hasFile(i));
+  const drone = mockDb.droneImagery.filter((i) => i.application_id === applicationId && hasFile(i));
+  const comparison = mockDb.comparisons.find((c) => c.application_id === applicationId);
+  const crop = mockDb.cropVerifications.find((c) => c.application_id === applicationId);
+  const evidence: VerificationReport['supporting_evidence'] = [];
+  if (ground.length)
+    evidence.push({ type: 'GROUND_PHOTOS', title: `Farmer ground photographs (${ground.length})`, reference: ground.map((g) => g.id).join(', '), date: latestDate(ground.map((g) => g.capture_timestamp ?? g.uploaded_at)) });
+  if (drone.length)
+    evidence.push({ type: 'DRONE_AERIAL', title: `Drone photographs (${drone.length})`, reference: [...new Set(drone.map((d) => d.mission_reference || d.inspection_id))].join(', '), date: latestDate(drone.map((d) => d.capture_timestamp ?? d.uploaded_at)) });
+  if (comparison)
+    evidence.push({ type: 'IMAGE_COMPARISON', title: `Image comparison: ${comparison.comparison_result}`, reference: comparison.id, date: (comparison.reviewed_at ?? comparison.created_at).slice(0, 10) });
+  if (crop)
+    evidence.push({ type: 'CROP_SURVEY', title: `Crop verification: ${crop.verification_result}`, reference: crop.id, date: crop.verified_at.slice(0, 10) });
+  return evidence;
+}
 
 export class ReportService {
   async getReportByApplicationId(applicationId: string): Promise<VerificationReport | null> {
@@ -58,17 +103,10 @@ export class ReportService {
       application_id: params.applicationId,
       reviewed_by: mockDb.currentUser.id,
       final_status: params.finalStatus,
-      findings: params.findings || {
-        boundaries_verified: true,
-        crop_matching: true,
-        drone_inspection_completed: true,
-      },
-      discrepancies: params.discrepancies || 'No significant discrepancies noted between ground declaration and drone aerial observations.',
-      supporting_evidence: [
-        { type: 'GROUND_PHOTOS', title: 'Farmer Field Ground Photos', reference: 'FLI-SERIES', date: new Date().toISOString().slice(0, 10) },
-        { type: 'DRONE_AERIAL', title: 'Field Worker Drone Photogrammetry', reference: 'DRN-SERIES', date: new Date().toISOString().slice(0, 10) },
-        { type: 'CROP_SURVEY', title: 'Crop Identification Record', reference: 'CROP-VERIF', date: new Date().toISOString().slice(0, 10) },
-      ],
+      // Findings and evidence are compiled from the records that actually exist
+      findings: { ...compileFindings(params.applicationId, params.propertyId), ...(params.findings ?? {}) },
+      discrepancies: params.discrepancies?.trim() || 'None recorded by the reviewer.',
+      supporting_evidence: compileEvidence(params.applicationId),
       report_storage_path: `reports/${reportRef}.pdf`,
       created_at: new Date().toISOString(),
     };
@@ -364,7 +402,7 @@ export class ReportService {
           'Crop Classification AI',
           'Spectral Band ML Model (MH-CROP-RF-v2.3)',
           cropPred
-            ? `Prediction: ${cropPred.predicted_crop} (Confidence: ${cropPred.confidence_score}%) | Status: ${cropPred.verification_status}`
+            ? `${cropPred.season} ${cropPred.season_year}: ${cropPred.predicted_crop ? `matched ${cropLabel(cropPred.predicted_crop)}` : `no answer (${cropPred.verdict_status.replace(/_/g, ' ')})`} from ${cropPred.observations.length} clear Sentinel-2 dates | Status: ${cropPred.verification_status}${cropPred.verified_crop ? ` (ground: ${cropLabel(cropPred.verified_crop)})` : ''}`
             : `Declared Crop: ${plot.crop_type || 'Sugarcane'}`
         ],
         [
@@ -382,11 +420,11 @@ export class ReportService {
             : 'Routine field survey scheduled'
         ],
         [
-          'Agricultural Yield Forecast',
-          'District Baseline + NDVI + Moisture Calibrator',
+          'Production scenario (not a forecast)',
+          'Expected yield × harvested area',
           yieldFc
-            ? `Estimated Yield: ${yieldFc.estimated_yield_tonnes_per_ha} t/ha | Total Production: ${yieldFc.estimated_total_tonnes} tonnes (District Baseline: ${yieldFc.historical_baseline_tonnes_per_ha} t/ha)`
-            : 'Yield calculator active'
+            ? `${cropLabel(yieldFc.crop_type)}: ${yieldFc.expected_yield_tonnes_per_ha} t/ha (${yieldFc.yield_source === 'USER_ENTERED' ? 'officer-entered' : 'illustrative district figure'}) × ${yieldFc.harvested_area_hectares} ha = ${yieldFc.estimated_total_tonnes} t`
+            : 'No scenario recorded'
         ],
         [
           'Disaster Damage Assessment',
@@ -481,7 +519,7 @@ export class ReportService {
       weather?.temperature_celsius ?? 'N/A',
       weather?.relative_humidity_pct ?? 'N/A',
       weather?.precipitation_mm ?? 'N/A',
-      yieldFc?.estimated_yield_tonnes_per_ha ?? 'N/A',
+      yieldFc?.expected_yield_tonnes_per_ha ?? 'N/A',
       yieldFc?.estimated_total_tonnes ?? 'N/A',
       `"${new Date().toISOString()}"`,
     ];
@@ -952,32 +990,38 @@ export class ReportService {
    */
   getCropClassificationEvaluationData() {
     const predictions = mockDb.cropPredictions;
-    const confirmed = predictions.filter((p) => p.verification_status === 'CONFIRMED');
+    const evaluation = cropClassificationService.evaluate();
     return {
-      modelVersion: 'MH-CROP-RF-v2.3',
+      modelVersion: MODEL_VERSION,
+      method: METHOD_NAME,
       totalPredictions: predictions.length,
-      confirmedCount: confirmed.length,
-      overallAccuracy: 88.4,
-      precisionMacro: 87.2,
-      recallMacro: 89.1,
-      f1Score: 88.1,
+      evaluation,
       predictions,
     };
   }
 
   generateCropClassificationEvaluationReport(format: 'pdf' | 'csv' = 'pdf'): void {
     const data = this.getCropClassificationEvaluationData();
+    const ev = data.evaluation;
+    const pct = (v: number | null) => (v === null ? 'not measurable yet' : `${(v * 100).toFixed(1)}%`);
+    const rowOf = (p: (typeof data.predictions)[number]) => [
+      p.plot_id,
+      `${p.season} ${p.season_year}`,
+      p.verdict_status,
+      cropLabel(p.predicted_crop),
+      p.candidate_crops.map(cropLabel).join(' / ') || '—',
+      String(p.observations.length),
+      p.verification_status,
+      cropLabel(p.verified_crop),
+    ];
+    const headers = ['Plot ID', 'Season', 'Verdict', 'Matched crop', 'Candidates', 'Clear dates', 'Status', 'Ground-verified crop'];
     if (format === 'csv') {
-      const headers = ['Plot ID', 'Predicted Crop', 'Confidence (%)', 'Model Version', 'Status', 'Verified Crop'];
-      const rows = data.predictions.map((p) => [
-        `"${p.plot_id}"`,
-        `"${p.predicted_crop}"`,
-        p.confidence_score,
-        `"${p.model_version}"`,
-        `"${p.verification_status}"`,
-        `"${p.verified_crop || 'Pending'}"`,
-      ]);
-      const csv = [headers.join(','), ...rows.map((r) => r.join(','))].join('\n');
+      const meta = [
+        `# Method: ${data.method}`,
+        `# Verified predictions: ${ev.verified}; answered: ${ev.answered}; correct: ${ev.correct}; accuracy on answered: ${pct(ev.accuracy)}; coverage: ${pct(ev.coverage)}`,
+        '# Accuracy is measured only on officer-verified plots; no other accuracy figure exists for this model.',
+      ];
+      const csv = [...meta, headers.join(','), ...data.predictions.map((p) => rowOf(p).map((v) => `"${String(v).replace(/"/g, '""')}"`).join(','))].join('\n');
       if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
         const url = URL.createObjectURL(blob);
@@ -993,26 +1037,24 @@ export class ReportService {
     const doc = new jsPDF();
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(14);
-    doc.text(`AI CROP CLASSIFICATION & EVALUATION REPORT`, 14, 20);
-    doc.setFontSize(9);
+    doc.text(`CROP CLASSIFICATION EVALUATION REPORT`, 14, 20);
+    doc.setFontSize(8.5);
     doc.setFont('helvetica', 'normal');
-    doc.text(`Model: ${data.modelVersion} | F1-Score: ${data.f1Score}% | Macro Precision: ${data.precisionMacro}% | Recall: ${data.recallMacro}%`, 14, 27);
-
-    const rows = data.predictions.map((p) => [
-      p.plot_id,
-      p.predicted_crop,
-      `${p.confidence_score}%`,
-      p.model_version,
-      p.verification_status,
-      p.verified_crop || '—',
-    ]);
-
+    const intro = doc.splitTextToSize(
+      `Method: ${data.method}. Model: ${data.modelVersion}. ` +
+        `Officer-verified predictions: ${ev.verified}. The matcher answered ${ev.answered} of them (coverage ${pct(ev.coverage)}), ` +
+        `${ev.correct} correctly (accuracy on answered ${pct(ev.accuracy)}). Accuracy is measured only on officer-verified plots; ` +
+        `with few verifications these figures are not statistically meaningful. Templates are indicative, not field-calibrated.`,
+      182
+    );
+    doc.text(intro, 14, 27);
     autoTable(doc, {
-      startY: 32,
-      head: [['Plot ID', 'AI Predicted Crop', 'Confidence', 'Model Version', 'Status', 'Ground Verification']],
-      body: rows,
+      startY: 27 + intro.length * 4 + 3,
+      head: [headers],
+      body: data.predictions.map(rowOf),
       theme: 'grid',
-      headStyles: { fillColor: [124, 58, 237], fontSize: 8 },
+      styles: { fontSize: 7 },
+      headStyles: { fillColor: [124, 58, 237], fontSize: 7 },
     });
 
     if (typeof window !== 'undefined' && typeof document !== 'undefined') {
@@ -1032,18 +1074,17 @@ export class ReportService {
   generateYieldEstimationReport(district: string = 'Pune', format: 'pdf' | 'csv' = 'pdf'): void {
     const data = this.getYieldEstimationData(district);
     if (format === 'csv') {
-      const headers = ['Plot ID', 'Crop', 'Forecast Date', 'Yield (t/ha)', 'Total Tonnes', 'Baseline (t/ha)', 'Uncertainty Min (t)', 'Uncertainty Max (t)'];
+      const headers = ['Plot ID', 'Crop', 'Created', 'Expected yield (t/ha)', 'Yield source', 'Harvested area (ha)', 'Production (t)'];
       const rows = data.forecasts.map((f) => [
         `"${f.plot_id}"`,
-        `"${f.crop_type}"`,
+        `"${cropLabel(f.crop_type)}"`,
         `"${f.forecast_date}"`,
-        f.estimated_yield_tonnes_per_ha,
+        f.expected_yield_tonnes_per_ha,
+        `"${f.yield_source}"`,
+        f.harvested_area_hectares,
         f.estimated_total_tonnes,
-        f.historical_baseline_tonnes_per_ha,
-        f.uncertainty_range_tonnes.min,
-        f.uncertainty_range_tonnes.max,
       ]);
-      const csv = [headers.join(','), ...rows.map((r) => r.join(','))].join('\n');
+      const csv = ['# Production SCENARIOS (expected yield x harvested area), not forecasts. Illustrative district figures are not official statistics.', headers.join(','), ...rows.map((r) => r.join(','))].join('\n');
       if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
         const url = URL.createObjectURL(blob);
@@ -1062,20 +1103,21 @@ export class ReportService {
     doc.text(`AGRICULTURAL YIELD ESTIMATION & PRODUCTION DOSSIER`, 14, 20);
     doc.setFontSize(9);
     doc.setFont('helvetica', 'normal');
-    doc.text(`District: ${district} | Total Estimated Production: ${data.totalProductionTonnes} Tonnes | Confidence: ±12%`, 14, 27);
+    doc.text(`District: ${district} | Sum of scenario production: ${data.totalProductionTonnes} t`, 14, 27);
+    doc.text('Scenario estimates (expected yield x harvested area), not forecasts; no uncertainty is estimated.', 14, 32);
 
     const rows = data.forecasts.map((f) => [
       f.plot_id,
-      f.crop_type,
-      `${f.estimated_yield_tonnes_per_ha} t/ha`,
+      cropLabel(f.crop_type),
+      `${f.expected_yield_tonnes_per_ha} t/ha`,
+      f.yield_source === 'USER_ENTERED' ? 'Officer-entered' : 'Illustrative figure',
+      `${f.harvested_area_hectares} ha`,
       `${f.estimated_total_tonnes} t`,
-      `${f.historical_baseline_tonnes_per_ha} t/ha`,
-      `${f.uncertainty_range_tonnes.min} - ${f.uncertainty_range_tonnes.max} t`,
     ]);
 
     autoTable(doc, {
-      startY: 32,
-      head: [['Plot ID', 'Crop', 'Forecast Yield', 'Total Tonnes', 'District Baseline', 'Uncertainty Band']],
+      startY: 37,
+      head: [['Plot ID', 'Crop', 'Expected yield', 'Yield source', 'Harvested area', 'Production']],
       body: rows,
       theme: 'grid',
       headStyles: { fillColor: [217, 119, 6], fontSize: 8 },

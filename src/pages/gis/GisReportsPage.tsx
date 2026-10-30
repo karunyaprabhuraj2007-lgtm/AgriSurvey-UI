@@ -19,6 +19,7 @@ import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
+import { cropLabel } from '@/services/crop-classification.service';
 import { reportService } from '@/services/report.service';
 import { mockDb } from '@/services/mock-db';
 import { MAHARASHTRA_DISTRICTS } from '@/lib/geospatial';
@@ -96,8 +97,8 @@ const REPORT_DEFINITIONS: Array<{
   {
     id: 'crop_classification',
     title: '8. Crop-Classification Evaluation Report',
-    category: 'AI Model Verification',
-    description: 'Random Forest model inference performance (precision, recall, F1-score) and comparison against ground verification.',
+    category: 'Model Verification',
+    description: 'Phenology-matcher results measured against officer ground verification: accuracy on answered plots, coverage and abstentions (only verified plots count).',
     primaryMetric: 'Model Accuracy & Provenance',
   },
   {
@@ -471,28 +472,35 @@ export const GisReportsPage: React.FC = () => {
 
       case 'crop_classification': {
         const data = reportService.getCropClassificationEvaluationData();
+        const ev = data.evaluation;
+        const pct = (v: number | null) => (v === null ? 'Not measurable yet' : `${(v * 100).toFixed(1)}%`);
         return (
           <div className="space-y-3">
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
               <div className="p-2.5 bg-slate-50 rounded-lg border border-slate-200">
-                <span className="text-slate-400 block text-[10px]">Model Version</span>
-                <strong className="text-purple-700">{data.modelVersion}</strong>
+                <span className="text-slate-400 block text-[10px]">Predictions run</span>
+                <strong>{data.totalPredictions}</strong>
               </div>
               <div className="p-2.5 bg-slate-50 rounded-lg border border-slate-200">
-                <span className="text-slate-400 block text-[10px]">Macro F1-Score</span>
-                <strong className="text-emerald-700">{data.f1Score}%</strong>
+                <span className="text-slate-400 block text-[10px]">Officer-verified</span>
+                <strong>{ev.verified}</strong>
               </div>
               <div className="p-2.5 bg-slate-50 rounded-lg border border-slate-200">
-                <span className="text-slate-400 block text-[10px]">Macro Precision</span>
-                <strong>{data.precisionMacro}%</strong>
+                <span className="text-slate-400 block text-[10px]">Accuracy (answered, verified)</span>
+                <strong className="text-emerald-700">{pct(ev.accuracy)}</strong>
               </div>
               <div className="p-2.5 bg-slate-50 rounded-lg border border-slate-200">
-                <span className="text-slate-400 block text-[10px]">Confirmed Review</span>
-                <strong className="text-emerald-700">{data.confirmedCount} / {data.totalPredictions}</strong>
+                <span className="text-slate-400 block text-[10px]">Coverage (answered / verified)</span>
+                <strong>{pct(ev.coverage)}</strong>
               </div>
             </div>
             <div className="text-xs text-slate-500">
-              Random Forest model separating Sugarcane, Soybean, Cotton, Wheat, Onion, and Rice using Sentinel-2 spectral features.
+              {data.method}. Accuracy is measured only on plots an officer has verified on the ground; no other accuracy
+              figure exists for this model. Labelled samples collected so far:{' '}
+              {Object.keys(ev.samplesPerCrop).length
+                ? Object.entries(ev.samplesPerCrop).map(([c, n]) => `${c} ${n}`).join(', ')
+                : 'none'}
+              .
             </div>
           </div>
         );
@@ -504,11 +512,11 @@ export const GisReportsPage: React.FC = () => {
           <div className="space-y-3">
             <div className="grid grid-cols-2 gap-2 text-xs">
               <div className="p-2.5 bg-slate-50 rounded-lg border border-slate-200">
-                <span className="text-slate-400 block text-[10px]">Forecast Parcels</span>
+                <span className="text-slate-400 block text-[10px]">Scenario records</span>
                 <strong>{data.totalForecasts}</strong>
               </div>
               <div className="p-2.5 bg-slate-50 rounded-lg border border-slate-200">
-                <span className="text-slate-400 block text-[10px]">Total Production</span>
+                <span className="text-slate-400 block text-[10px]">Sum of production scenarios</span>
                 <strong className="text-amber-700">{data.totalProductionTonnes} Tonnes</strong>
               </div>
             </div>
@@ -517,20 +525,20 @@ export const GisReportsPage: React.FC = () => {
                 <thead className="bg-slate-50 text-slate-600 border-b border-slate-200 text-[11px]">
                   <tr>
                     <th className="p-2 font-bold">Crop</th>
-                    <th className="p-2 font-bold">Yield (t/ha)</th>
-                    <th className="p-2 font-bold">Total Estimated (t)</th>
-                    <th className="p-2 font-bold">District Baseline</th>
-                    <th className="p-2 font-bold">Uncertainty Range</th>
+                    <th className="p-2 font-bold">Expected yield</th>
+                    <th className="p-2 font-bold">Yield source</th>
+                    <th className="p-2 font-bold">Harvested area</th>
+                    <th className="p-2 font-bold">Production (scenario)</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
                   {data.forecasts.map((f) => (
                     <tr key={f.id}>
-                      <td className="p-2 font-semibold text-emerald-800">{f.crop_type}</td>
-                      <td className="p-2 font-bold">{f.estimated_yield_tonnes_per_ha} t/ha</td>
-                      <td className="p-2">{f.estimated_total_tonnes} t</td>
-                      <td className="p-2 text-slate-500">{f.historical_baseline_tonnes_per_ha} t/ha</td>
-                      <td className="p-2 font-mono text-[11px]">{f.uncertainty_range_tonnes.min} - {f.uncertainty_range_tonnes.max} t</td>
+                      <td className="p-2 font-semibold text-emerald-800">{cropLabel(f.crop_type)}</td>
+                      <td className="p-2 font-bold">{f.expected_yield_tonnes_per_ha} t/ha</td>
+                      <td className="p-2 text-slate-500">{f.yield_source === 'USER_ENTERED' ? 'Officer-entered' : 'Illustrative figure'}</td>
+                      <td className="p-2">{f.harvested_area_hectares} ha</td>
+                      <td className="p-2 font-mono text-[11px]">{f.estimated_total_tonnes} t</td>
                     </tr>
                   ))}
                 </tbody>

@@ -56,14 +56,13 @@ const CROPS = [
   'Fallow',
 ];
 
-export const CoordinateMonitoringModal: React.FC<CoordinateMonitoringModalProps> = ({
+const CoordinateMonitoringModalContent: React.FC<CoordinateMonitoringModalProps> = ({
   isOpen,
   onClose,
   availablePlots = [],
   defaultPlot,
   onAreaCreated,
 }) => {
-  if (!isOpen) return null;
 
   // Selected plot linkage
   const [selectedPlotId, setSelectedPlotId] = useState<string>(defaultPlot?.id || 'none');
@@ -474,3 +473,7 @@ export const CoordinateMonitoringModal: React.FC<CoordinateMonitoringModalProps>
     </div>
   );
 };
+
+// Mount the content only while open so its hooks always run in the same order.
+export const CoordinateMonitoringModal: React.FC<CoordinateMonitoringModalProps> = (props) =>
+  props.isOpen ? <CoordinateMonitoringModalContent {...props} /> : null;
