@@ -342,8 +342,8 @@ export class PlantHealthEngine {
         ],
         data_freshness: 'No recent data',
         confidence: null,
-        assessment_method: 'AgriSurvey Agronomic Rules Engine v2.4',
-        model_version: 'v2.4.0-agri-rules',
+        assessment_method: 'Agronomic threshold rules on sensor readings and recorded field observations (no ML model)',
+        model_version: 'agronomic-rules',
         is_preliminary: true,
         created_at: new Date().toISOString(),
       };
@@ -486,7 +486,7 @@ export class PlantHealthEngine {
       }
     }
 
-    // 3. Evaluate Manual Field Observations and AI Predictions
+    // 3. Evaluate recorded field observations
     const latestObservation = observations[0];
     if (latestObservation) {
       if (latestObservation.wilting_observed) {
@@ -507,22 +507,8 @@ export class PlantHealthEngine {
         possibleConcerns.push('Possible nitrogen or micronutrient deficiency, or early viral infection.');
       }
 
-      // Method A: AI Vision Prediction check
-      if (latestObservation.ai_prediction) {
-        const ai = latestObservation.ai_prediction;
-        if (ai.confidence > 70 && ai.potential_diseases.length > 0) {
-          const topDisease = ai.potential_diseases[0];
-          if (topDisease.probability > 0.65) {
-            atRiskCount++;
-            detectedAnomalies.push(
-              `AI Vision Prediction: Estimated symptoms of ${topDisease.name} (Confidence: ${(topDisease.probability * 100).toFixed(0)}%).`
-            );
-            possibleConcerns.push(
-              `Potential foliar pathogen activity: ${topDisease.name}. Note: Physical agronomic confirmation recommended.`
-            );
-          }
-        }
-      }
+      // Older records may carry an "ai_prediction" from a former simulated vision feature;
+      // it only echoed the observer's own inputs and is deliberately ignored.
     }
 
     // 4. Stale Data Notice
@@ -548,12 +534,7 @@ export class PlantHealthEngine {
       suggestedNextSteps.push('Maintain current irrigation schedule and fertigation baseline.');
     }
 
-    // Confidence estimation
-    let confidenceScore = 92;
-    if (isPreliminary) confidenceScore -= 10;
-    if (validReadings.length < 2) confidenceScore -= 15;
-    if (isStale) confidenceScore -= 15;
-    confidenceScore = Math.max(50, Math.min(98, confidenceScore));
+    // A threshold rules engine has no statistical confidence; data limits are reported instead
 
     return {
       id: `pha-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
@@ -566,9 +547,9 @@ export class PlantHealthEngine {
       possible_concerns: possibleConcerns.length > 0 ? possibleConcerns : ['No acute physiological concerns detected.'],
       suggested_next_steps: suggestedNextSteps.length > 0 ? suggestedNextSteps : ['Continue regular monitoring cycles.'],
       data_freshness: freshnessLabel,
-      confidence: confidenceScore,
-      assessment_method: 'AgriSurvey Agronomic Rules Engine v2.4 + Vision AI v1.2',
-      model_version: 'v2.4.2-pune-rules',
+      confidence: null,
+      assessment_method: 'Agronomic threshold rules on sensor readings and recorded field observations (no ML model)',
+      model_version: 'agronomic-rules',
       is_preliminary: isPreliminary,
       created_at: new Date().toISOString(),
     };

@@ -760,22 +760,42 @@ export interface MobileFieldSurveyRecord {
   created_at: string;
 }
 
+/**
+ * Crop identification for one plot and season by phenology template matching on the
+ * plot's real Sentinel-2 NDVI series (see src/lib/crop-phenology.ts). The matcher may
+ * abstain: `predicted_crop` is null unless `verdict_status` is 'matched'.
+ */
 export interface CropPredictionRecord {
   id: string;
   plot_id: string;
-  predicted_crop: string;
-  confidence_score: number; // 0-100
-  class_probabilities: Record<string, number>;
+  season: 'kharif' | 'rabi';
+  season_year: number;
+  window_start: string;
+  window_end: string;
+  verdict_status: 'matched' | 'ambiguous' | 'no_match' | 'truncated_window' | 'insufficient_observations';
+  /** Crop key (e.g. "soybean") when matched; null when the matcher abstained */
+  predicted_crop: string | null;
+  /** Crops that fit almost equally well (ambiguous) or the matched crop */
+  candidate_crops: string[];
+  verdict_message: string;
+  /** Template fit per crop, 0–1 (1 − RMSE / curve amplitude). Not a probability. */
+  template_fits: { crop: string; fit: number; shift_days: number }[];
+  /** Clear Sentinel-2 observations used: acquisition date, plot median NDVI, scene */
+  observations: { date: string; ndvi: number; scene_id?: string; clear_pct?: number }[];
+  /** Gap-filled, smoothed curve on a `grid_step_days` grid from window_start */
+  smoothed_curve: number[] | null;
+  grid_step_days: number;
+  phenology: {
+    sos_day: number;
+    eos_day: number;
+    peak_day: number;
+    peak_ndvi: number;
+    amplitude: number;
+    season_length_days: number;
+  } | null;
+  method: string;
   model_version: string;
-  features_analyzed: {
-    ndvi_mean: number;
-    ndwi: number;
-    b02_blue: number;
-    b03_green: number;
-    b04_red: number;
-    b08_nir: number;
-    season: string;
-  };
+  data_source: string;
   verified_crop?: string;
   verification_status: 'AI_PREDICTION' | 'CONFIRMED' | 'DISCREPANCY_MARKED';
   reviewer_id?: string;
@@ -785,22 +805,31 @@ export interface CropPredictionRecord {
   created_at: string;
 }
 
+/**
+ * Production scenario: expected yield × harvested area. Not a forecast or model output —
+ * no validated yield model exists yet (it needs historical plot yields with units).
+ */
 export interface YieldForecastRecord {
   id: string;
   plot_id: string;
+  estimate_kind: 'SCENARIO';
   crop_type: string;
+  /** Registered plot area */
   cultivated_area_hectares: number;
-  estimated_yield_tonnes_per_ha: number;
+  /** Area assumed harvested (defaults to the plot area; planted ≠ harvested) */
+  harvested_area_hectares: number;
+  expected_yield_tonnes_per_ha: number;
+  yield_source: 'USER_ENTERED' | 'ILLUSTRATIVE_DISTRICT_FIGURE';
   estimated_total_tonnes: number;
-  historical_baseline_tonnes_per_ha: number;
-  deviation_percentage: number;
-  water_source_factor: number;
-  rainfall_anomaly_factor: number;
-  ndvi_canopy_factor: number;
-  uncertainty_range_tonnes: { min: number; max: number };
-  model_type: 'Historical Baseline + Environmental Calibration' | 'ML Regression';
+  /** Illustrative district figure for comparison, when one is listed for the crop */
+  reference_district_tonnes_per_ha: number | null;
+  /** Latest measured season peak NDVI for context only; it is not used in the arithmetic */
+  measured_peak_ndvi?: { value: number; date: string } | null;
+  assumptions: string[];
+  model_type: 'Scenario estimate';
   data_sources: string[];
   forecast_date: string;
+  created_by: string;
 }
 
 export interface DisasterAssessmentRecord {
@@ -823,6 +852,18 @@ export interface DisasterAssessmentRecord {
   verification_status: 'PRELIMINARY_AI_OBSERVATION' | 'FIELD_VERIFIED' | 'COMPENSATION_APPROVED';
   surveyor_notes?: string;
   assessed_at: string;
+  /** Satellite evidence behind the screening (present on measured assessments) */
+  method?: string;
+  pre_scene_id?: string;
+  post_scene_id?: string;
+  pre_clear_pct?: number;
+  post_clear_pct?: number;
+  /** Plot pixels clear on both dates (compared) and their share of the plot */
+  compared_pixels?: number;
+  compared_pct_of_plot?: number;
+  /** NDVI decrease counted as change */
+  change_threshold?: number;
+  median_ndvi_change?: number;
 }
 
 export type MonitoringStatus =

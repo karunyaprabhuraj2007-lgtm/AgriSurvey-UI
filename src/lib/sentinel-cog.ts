@@ -70,6 +70,11 @@ export interface SceneClip {
   ndviUrl: string;
   stats: SceneClipStats;
   reflectance: { scale: number; offset: number; source: string };
+  /**
+   * Per-pixel arrays on the output grid (only with ClipOptions.includePixels). Two clips
+   * of the same area and options share the same grid, so they can be compared pixel by pixel.
+   */
+  pixels?: { ndvi: Float32Array; valid: Uint8Array; inArea: Uint8Array };
 }
 
 export type ClipImageMode = 'visual' | 'false_color' | 'ndvi';
@@ -387,6 +392,8 @@ export interface ClipOptions {
   /** Longest side of the rendered images, in pixels */
   maxOutputDim?: number;
   signal?: AbortSignal;
+  /** Return per-pixel NDVI / validity / area masks (for change detection) */
+  includePixels?: boolean;
 }
 
 function surveyAreaBounds(area: SurveyArea): AoiBounds {
@@ -647,6 +654,9 @@ export async function loadAreaClip(scene: SatelliteScene, area: SurveyArea, opti
     ndviUrl: toDataUrl(ndviRgba, width, height),
     stats,
     reflectance: sRed,
+    pixels: options.includePixels
+      ? { ndvi: NDVI, valid: Uint8Array.from(masked, (m) => (m === 0 ? 1 : 0)), inArea }
+      : undefined,
   };
 }
 

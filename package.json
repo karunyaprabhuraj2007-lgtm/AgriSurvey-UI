@@ -8,7 +8,7 @@
     "build": "tsc -b && vite build",
     "lint": "oxlint",
     "preview": "vite preview",
-    "test": "tsx scripts/run-acceptance-tests.ts && tsx scripts/test-geospatial-suite.ts && tsx scripts/test-farmer-workflow.ts && tsx scripts/test-gis-e2e.ts"
+    "test": "tsx scripts/test-ml-models.ts && tsx scripts/run-acceptance-tests.ts && tsx scripts/test-geospatial-suite.ts && tsx scripts/test-farmer-workflow.ts && tsx scripts/test-gis-e2e.ts"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.9.1",

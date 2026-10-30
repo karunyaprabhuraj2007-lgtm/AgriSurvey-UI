@@ -769,47 +769,14 @@ export const ContinuousMonitoringTimeline: React.FC<ContinuousMonitoringTimeline
                   <div className="flex items-center justify-between">
                     <span className="text-xs font-bold uppercase tracking-wider text-emerald-400 flex items-center gap-1.5">
                       <Sparkles className="w-4 h-4" />
-                      Sample model output
-                    </span>
-                    <span className="text-[10px] bg-amber-400 text-amber-950 px-2 py-0.5 rounded font-bold">
-                      Demo only
+                      Crop identification
                     </span>
                   </div>
 
-                  {selectedObs.crop_prediction ? (
-                    <div>
-                      <div className="text-xs text-slate-400">Classified Crop Identity</div>
-                      <div className="text-lg font-bold text-white mt-0.5 flex items-center justify-between">
-                        <span>{selectedObs.crop_prediction.crop_name}</span>
-                        <span className="text-emerald-400 font-mono text-sm">
-                          {selectedObs.crop_prediction.confidence.toFixed(1)}%
-                        </span>
-                      </div>
-
-                      {/* Threshold warning if confidence < 90% */}
-                      {selectedObs.crop_prediction.needs_field_check && (
-                        <div className="mt-2.5 p-2 rounded-lg bg-amber-500/20 border border-amber-500/40 text-amber-200 text-[11px] flex items-start gap-1.5">
-                          <ShieldAlert className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
-                          <span>Selective Prediction: Below 90% confidence threshold. Flagged for Tahsildar ground verification.</span>
-                        </div>
-                      )}
-
-                      {/* Model Ranking */}
-                      <div className="mt-3 space-y-1.5">
-                        <div className="text-[11px] text-slate-400 font-semibold">Classification Probabilities:</div>
-                        {selectedObs.crop_prediction.ranking.map((r) => (
-                          <div key={r.crop} className="flex justify-between items-center text-xs">
-                            <span className="text-slate-300">{r.crop}</span>
-                            <span className="font-mono text-slate-400">{r.fit.toFixed(1)}%</span>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="text-xs text-slate-400 italic">
-                      Crop classification requires usable Sentinel-2 phenology features.
-                    </div>
-                  )}
+                  <div className="text-xs text-slate-300 leading-relaxed">
+                    Crop identity is not inferred from a single sample period. Use <strong>Crop ID, Yield &amp; Disaster</strong> on the plot in GIS
+                    Crop Survey: it fits the plot's whole-season Sentinel-2 NDVI curve and abstains when the evidence is inconclusive.
+                  </div>
                 </div>
               ) : (
                 <div className="p-3 rounded-xl bg-slate-900 text-white border border-slate-700 space-y-2">

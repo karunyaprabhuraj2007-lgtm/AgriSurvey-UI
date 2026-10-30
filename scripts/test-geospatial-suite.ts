@@ -9,9 +9,9 @@
  * 5. Open-Meteo weather API coordinate retrieval, current observation, and 7-day forecast.
  * 6. RTK Drone Mission & Orthomosaic management with geotagged photo locations.
  * 7. Mobile Field Survey offline drafting and sync queue execution.
- * 8. AI Crop Classification & Human verification workflow.
- * 9. Yield forecasting with environmental factors & district baseline comparison.
- * 10. Preliminary disaster damage assessment (NDVI change detection & affected area).
+ * 8. Crop identification (phenology template matcher) & officer verification.
+ * 9. Production scenario (expected yield × harvested area).
+ * 10. Disaster screening: per-pixel NDVI change logic.
  * 11. Plot-level PDF dossier & CSV data export.
  */
 
@@ -24,9 +24,20 @@ import { droneSurveyService } from '../src/services/drone-survey.service';
 import { mobileSurveyService } from '../src/services/mobile-survey.service';
 import { cropClassificationService } from '../src/services/crop-classification.service';
 import { yieldForecastingService } from '../src/services/yield-forecasting.service';
-import { disasterAssessmentService } from '../src/services/disaster-assessment.service';
+import { summariseNdviChange } from '../src/services/disaster-assessment.service';
 import { reportService } from '../src/services/report.service';
 import { computeGeodesicMeasurements } from '../src/lib/geospatial';
+
+// Synthetic soybean curve (template shape, 5-day sampling) for the offline decision test.
+function syntheticSoybeanSeries(year: number) {
+  const out: { date: string; ndvi: number }[] = [];
+  const start = Date.UTC(year, 5, 10);
+  for (let d = 0; d <= 170; d += 5) {
+    const ndvi = 0.15 + (0.82 - 0.15) * (1 / (1 + Math.exp(-0.14 * (d - 22))) - 1 / (1 + Math.exp(-0.16 * (d - 107))));
+    out.push({ date: new Date(start + d * 86400000).toISOString().slice(0, 10), ndvi });
+  }
+  return out;
+}
 
 function assert(condition: boolean, msg: string) {
   if (!condition) {
@@ -174,55 +185,41 @@ async function runGeospatialSuite() {
   assert(syncResult.syncedCount >= 1, 'Offline draft synchronized successfully');
   assert(draftSurvey.sync_status === 'SYNCHRONIZED', 'Draft status changed to SYNCHRONIZED');
 
-  // --- Step 7: Crop Classification AI & Human Approval ---
-  console.log('\n--- Step 7: Crop Classification AI Pipeline & Human Review ---');
-  const prediction = await cropClassificationService.classifyPlotCrop(createdPlot.id);
-  console.log(`   Predicted Crop: ${prediction.predicted_crop} (Confidence: ${prediction.confidence_score}%)`);
-  console.log(`   Model: ${prediction.model_version}`);
-  assert(Boolean(prediction.predicted_crop), 'Crop prediction generated');
-  assert(prediction.confidence_score >= 50, 'Confidence score exceeds minimum classification threshold');
-  assert(prediction.verification_status === 'AI_PREDICTION', 'Prediction tagged as AI_PREDICTION before human verification');
+  // --- Step 7: Crop identification (phenology matcher) & officer verification ---
+  console.log('\n--- Step 7: Crop Identification & Officer Verification ---');
+  const prediction = await cropClassificationService.classifyFromObservations(createdPlot.id, 'kharif', 2025, syntheticSoybeanSeries(2025), 'synthetic test series');
+  console.log(`   Verdict: ${prediction.verdict_status} | crop: ${prediction.predicted_crop ?? '—'} | candidates: ${prediction.candidate_crops.join(', ')}`);
+  assert(prediction.template_fits[0]?.crop === 'soybean', 'Soybean curve best fits the soybean template');
+  assert(prediction.verdict_status !== 'matched' || prediction.predicted_crop === 'soybean', 'No wrong crop is confidently claimed');
+  assert(prediction.verification_status === 'AI_PREDICTION', 'Result tagged unverified until an officer checks it');
 
+  mockDb.setCurrentUserByRole('tahsildar');
   const verifiedPrediction = await cropClassificationService.verifyCropPrediction({
     predictionId: prediction.id,
-    decision: 'CONFIRMED',
-    verifiedCrop: 'Sugarcane',
-    reviewerId: 'usr-tahsildar-01',
-    reviewerName: 'Anand Shrikant Kulkarni (Tahsildar)',
-    reviewerNotes: 'Sugarcane stand confirmed via drone orthomosaic and field survey.',
+    verifiedCrop: 'soybean',
+    reviewerNotes: 'Soybean confirmed during field visit.',
   });
+  assert(verifiedPrediction.verified_crop === 'soybean', 'Verified crop recorded');
+  assert(verifiedPrediction.reviewer_name === mockDb.currentUser.full_name, 'Reviewer is the logged-in officer');
 
-  assert(verifiedPrediction.verification_status === 'CONFIRMED', 'Prediction officially confirmed by Tahsildar');
-  assert(verifiedPrediction.verified_crop === 'Sugarcane', 'Verified crop recorded');
+  // --- Step 8: Production scenario ---
+  console.log('\n--- Step 8: Production Scenario (expected yield × harvested area) ---');
+  const forecast = await yieldForecastingService.forecastPlotYield(createdPlot.id, { cropKey: 'soybean', expectedYieldTPerHa: 1.1 });
+  console.log(`   Scenario: ${forecast.expected_yield_tonnes_per_ha} t/ha × ${forecast.harvested_area_hectares} ha = ${forecast.estimated_total_tonnes} t`);
+  assert(forecast.estimate_kind === 'SCENARIO', 'Labelled as a scenario estimate');
+  assert(forecast.estimated_total_tonnes > 0, 'Total production is positive');
+  assert(forecast.plot_id === createdPlot.id, 'Scenario tied to plot_id');
 
-  // --- Step 8: Yield Forecasting Engine ---
-  console.log('\n--- Step 8: Yield Forecasting & Production Estimation ---');
-  const forecast = await yieldForecastingService.forecastPlotYield(createdPlot.id);
-  console.log(`   Estimated Yield: ${forecast.estimated_yield_tonnes_per_ha} tonnes/ha (District Baseline: ${forecast.historical_baseline_tonnes_per_ha} tonnes/ha)`);
-  console.log(`   Estimated Production: ${forecast.estimated_total_tonnes} tonnes on ${forecast.cultivated_area_hectares} Ha`);
-  console.log(`   Uncertainty Range: ${forecast.uncertainty_range_tonnes.min} - ${forecast.uncertainty_range_tonnes.max} tonnes`);
-  assert(forecast.estimated_yield_tonnes_per_ha > 0, 'Yield per ha is positive');
-  assert(forecast.estimated_total_tonnes > 0, 'Total estimated production is positive');
-  assert(forecast.plot_id === createdPlot.id, 'Forecast tied to plot_id');
-
-  // --- Step 9: Preliminary Disaster Damage Assessment ---
-  console.log('\n--- Step 9: Disaster Assessment & Change Detection ---');
-  const disaster = await disasterAssessmentService.assessPlotDisaster({
-    plotId: createdPlot.id,
-    eventName: 'October 2026 Haveli Heavy Inundation',
-    eventType: 'HEAVY_RAINFALL_FLOOD',
-    preEventDate: '2026-10-05',
-    postEventDate: '2026-10-20',
-    preEventNdvi: 0.72,
-    postEventNdvi: 0.44, // Significant drop
-  });
-
-  console.log(`   Pre NDVI: ${disaster.pre_event_ndvi} -> Post NDVI: ${disaster.post_event_ndvi} (Delta: ${disaster.ndvi_change_delta})`);
-  console.log(`   Affected Area: ${disaster.affected_area_acres} Acres (${disaster.affected_percentage}%)`);
-  console.log(`   Severity: ${disaster.damage_severity} | Inspection Priority: ${disaster.inspection_priority}`);
-  assert(disaster.ndvi_change_delta < 0, 'Negative NDVI delta calculated for inundated area');
-  assert(disaster.affected_area_acres > 0, 'Affected acreage calculated using geodesic parcel area');
-  assert(disaster.verification_status === 'PRELIMINARY_AI_OBSERVATION', 'Strictly tagged as PRELIMINARY_AI_OBSERVATION');
+  // --- Step 9: Disaster change detection (pixel logic) ---
+  console.log('\n--- Step 9: Disaster Screening — NDVI Change Logic ---');
+  const inArea = new Uint8Array(50).fill(1);
+  const valid = new Uint8Array(50).fill(1);
+  const preNdvi = new Float32Array(50).fill(0.72);
+  const postNdvi = new Float32Array(50).fill(0.7);
+  postNdvi.fill(0.4, 0, 20);
+  const change = summariseNdviChange({ ndvi: preNdvi, valid, inArea }, { ndvi: postNdvi, valid, inArea }, 0.15)!;
+  console.log(`   Affected: ${change.affectedPct}% of compared pixels; median change ${change.medianDelta.toFixed(2)}`);
+  assert(change.changed === 20 && change.affectedPct === 40, 'Pixels with an NDVI drop ≥ threshold counted');
 
   // --- Step 10: Multi-Format Report Generation ---
   console.log('\n--- Step 10: Multi-Format Report Dossier (PDF & CSV) ---');
@@ -234,7 +231,9 @@ async function runGeospatialSuite() {
   console.log('================================================================\n');
 }
 
-runGeospatialSuite().catch((err) => {
+runGeospatialSuite()
+  .then(() => process.exit(0)) // Firestore sync retries would otherwise keep Node alive
+  .catch((err) => {
   console.error('Fatal error during geospatial test run:', err);
   process.exit(1);
 });

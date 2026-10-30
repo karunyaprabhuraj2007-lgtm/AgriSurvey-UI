@@ -171,11 +171,11 @@ export const CropVerificationPage: React.FC = () => {
                 </div>
                 <div>
                   <span className="text-emerald-800 block text-[10px] uppercase font-bold">{tl('vegetationNdvi')}</span>
-                  <span className="font-bold font-mono">{aiResult.prediction.vegetationIndexNdvi}</span>
+                  <span className="font-bold font-mono">{aiResult.prediction.vegetationIndexNdvi ?? '—'}</span>
                 </div>
                 <div>
                   <span className="text-emerald-800 block text-[10px] uppercase font-bold">{tl('suggestedResult')}</span>
-                  <span className="font-bold">{aiResult.prediction.suggestedVerification}</span>
+                  <span className="font-bold">{aiResult.prediction.suggestedVerification ?? '—'}</span>
                 </div>
               </div>
             )}

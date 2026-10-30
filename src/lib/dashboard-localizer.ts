@@ -1011,7 +1011,7 @@ export function getGisLabel(
       ml: 'കാലാവസ്ഥ വിവരങ്ങൾ',
     },
     aiYieldDisaster: {
-      en: 'AI Yield & Disaster',
+      en: 'Crop ID, Yield & Disaster',
       mr: 'उत्पादन व आपत्ती अंदाज',
       hi: 'उपज एवं आपदा आकलन',
       ta: 'மகசூல் & பேரிடர் மதிப்பீடு',
@@ -2560,7 +2560,7 @@ export function getTahsildarLabel(key: string, lang: LanguageCode): string {
       ml: 'വിള തിരിച്ചറിയലും സ്ഥിരീകരണവും',
     },
     cropVerificationSubtitle: {
-      en: 'Cross-reference declared agricultural crops with drone aerial evidence and AI vision analysis',
+      en: 'Cross-reference declared agricultural crops with drone aerial evidence and field observation',
       mr: 'ड्रोन हवाई पुरावे आणि एआय दृष्टी विश्लेषणासह घोषित शेती पिकांची पडताळणी करा',
       hi: 'ड्रोन हवाई साक्ष्य और एआई विश्लेषण के साथ घोषित कृषि फसलों का मिलान करें',
       ta: 'ட்ரோன் வான்வழி சான்றுகள் மற்றும் AI பார்வை பகுப்பாய்வு மூலம் அறிவிக்கப்பட்ட பயிர்களை சரிபார்க்கவும்',
@@ -2620,7 +2620,7 @@ export function getTahsildarLabel(key: string, lang: LanguageCode): string {
       ml: 'രജിസ്റ്റർ ചെയ്ത വിസ്തീർണ്ണം:',
     },
     runAiCropIdentification: {
-      en: 'Run AI Crop Identification',
+      en: 'Check crop analysis service',
       mr: 'एआय पीक ओळख चालवा',
       hi: 'एआई फसल पहचान चलाएं',
       ta: 'AI பயிர் அடையாளத்தை இயக்கவும்',
@@ -2632,7 +2632,7 @@ export function getTahsildarLabel(key: string, lang: LanguageCode): string {
       ml: 'എഐ വിള തിരിച്ചറിയൽ പ്രവർത്തിപ്പിക്കുക',
     },
     aiCropVisionStatus: {
-      en: 'AI Crop Vision Status',
+      en: 'Crop analysis service',
       mr: 'एआय पीक व्हिजन स्थिती',
       hi: 'एआई फसल विजन स्थिति',
       ta: 'AI பயிர் பார்வை நிலை',

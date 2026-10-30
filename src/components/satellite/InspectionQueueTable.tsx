@@ -2,7 +2,7 @@
  * AgriSurvey AI — Tahsildar Continuous Satellite Inspection Queue
  * 
  * Allows Tahsildars and Revenue Officers to inspect flagged parcels where:
- * 1. GM-ML-V2 confidence < 90% (e.g., Cotton vs Tur spectral confusion)
+ * 1. Satellite crop identification abstained (ambiguous / no match) and is not yet ground-verified
  * 2. 15-day NDVI delta dropped abruptly (<-0.15)
  * 3. Canopy moisture stress (NDMI < -0.10) indicates potential drought or pest blighting.
  */

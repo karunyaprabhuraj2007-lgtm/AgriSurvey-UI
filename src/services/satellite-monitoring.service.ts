@@ -637,10 +637,12 @@ export class SatelliteMonitoringService {
       priority = 'HIGH';
     }
 
-    if (obs.crop_prediction && obs.crop_prediction.confidence < 90) {
-      reasons.push(
-        `Selective prediction confidence threshold not met: ${obs.crop_prediction.crop_name} (${obs.crop_prediction.confidence.toFixed(1)}% < 90%)`
-      );
+    // Satellite crop identification (phenology matcher) that abstained and is not yet verified
+    const pendingCropId = area.plot_id
+      ? mockDb.cropPredictions.find((p) => p.plot_id === area.plot_id && !p.verified_crop)
+      : undefined;
+    if (pendingCropId && (pendingCropId.verdict_status === 'ambiguous' || pendingCropId.verdict_status === 'no_match')) {
+      reasons.push(`Satellite crop identification inconclusive (${pendingCropId.verdict_status.replace('_', ' ')}, ${pendingCropId.season} ${pendingCropId.season_year}); ground check needed`);
       priority = priority === 'HIGH' ? 'CRITICAL' : 'HIGH';
     }
 
@@ -660,10 +662,10 @@ export class SatelliteMonitoringService {
       district: plot?.district || 'Unknown',
       taluk: plot?.taluk || 'Unknown',
       village: plot?.village || 'Unknown',
-      crop_type: area.preferred_crop || obs.crop_prediction?.crop_name || 'Not declared',
+      crop_type: area.preferred_crop || 'Not declared',
       priority,
       reasons,
-      confidence_score: obs.crop_prediction?.confidence ?? null,
+      confidence_score: null,
       latest_ndvi_delta: obs.delta_ndvi_previous || 0,
       latest_moisture_level: obs.indices?.ndmi_mean ?? NaN,
       status: 'PENDING_OFFICER_REVIEW',

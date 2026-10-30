@@ -7,7 +7,6 @@ import {
   CheckCircle2,
   AlertCircle,
   Clock,
-  Sparkles,
   Camera,
   Info,
   Droplets,
@@ -411,21 +410,7 @@ export const PlantUnitDetailModal: React.FC<PlantUnitDetailModalProps> = ({
                     </div>
                   )}
 
-                  {/* AI Prediction Box */}
-                  {obs.ai_prediction && (
-                    <div className="p-2.5 bg-emerald-50/70 border border-emerald-200 rounded-lg text-xs space-y-1">
-                      <div className="flex items-center justify-between text-emerald-900 font-bold">
-                        <span className="flex items-center gap-1">
-                          <Sparkles className="w-3.5 h-3.5 text-emerald-600" />
-                          AI Prediction: {obs.ai_prediction.condition}
-                        </span>
-                        <span className="text-[10px] bg-white px-2 py-0.5 rounded border border-emerald-200 text-emerald-700">
-                          Confidence: {obs.ai_prediction.confidence}%
-                        </span>
-                      </div>
-                      <p className="text-[10px] text-slate-600">{obs.ai_prediction.disclaimer}</p>
-                    </div>
-                  )}
+                  {/* Older records may contain a simulated "AI prediction"; it echoed the observer's inputs and is not shown */}
                 </div>
               ))
             ) : (
