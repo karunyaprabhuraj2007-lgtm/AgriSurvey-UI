@@ -46,6 +46,8 @@ export const PUNE_TALUKS = [
   'Velhe',
 ];
 
+export const ACTIVE_PILOT_TALUKS = ['Haveli', 'Baramati', 'Shirur', 'Daund'] as const;
+
 export const PUNE_SAMPLE_VILLAGES: Record<string, string[]> = {
   Haveli: ['Wagholi', 'Uruli Kanchan', 'Manjari', 'Hadapsar Rural', 'Loni Kalbhor', 'Khadakwasla', 'Khed Shivapur'],
   Baramati: ['Malegaon', 'Supae', 'Somanthali', 'Korhale', 'Deulgaon Rasal', 'Morgaon'],

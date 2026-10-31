@@ -607,12 +607,71 @@ export interface FarmPlot {
   sowing_date?: string;
   created_at: string;
   updated_at: string;
+  // 4-Way Area Separation (Challenge Module A)
+  farmer_declared_area_ha?: number;
+  ml_predicted_area_ha?: number;
+  field_observed_area_ha?: number;
+  tahsildar_verified_area_ha?: number;
+  // Crop classifications across stages
+  ml_predicted_crop?: string;
+  field_observed_crop?: string;
+  tahsildar_verified_crop?: string;
+  land_classification?: 'cultivated' | 'fallow' | 'mixed_crop' | 'unclassified';
+  // Boundary versioning and audit trail
+  version?: number;
+  boundary_history?: Array<{
+    version: number;
+    coordinates: [number, number][];
+    area_sqm: number;
+    updated_at: string;
+    updated_by?: string;
+    reason?: string;
+  }>;
   // Joined fields for display
   farmer_name?: string;
   farmer_phone?: string;
   latest_ndvi?: number;
   latest_weather?: string;
   verification_status?: string;
+}
+
+export interface AcreageAggregation {
+  aggregation_level: 'district' | 'taluk' | 'village' | 'plot';
+  region_name: string;
+  total_plots_count: number;
+  total_registered_area_sqm: number;
+  total_registered_area_ha: number;
+  total_registered_area_acres: number;
+  // 4-Way Area Separation
+  farmer_declared_area_ha: number;
+  ml_predicted_area_ha: number;
+  field_observed_area_ha: number;
+  tahsildar_verified_area_ha: number;
+  // Deduplication & overlap math
+  raw_polygon_sum_ha: number;
+  net_mapped_deduplicated_ha: number;
+  overlapping_area_ha: number;
+  overlapping_polygons_count: number;
+  // Land classifications
+  cultivated_area_ha: number;
+  fallow_area_ha: number;
+  mixed_crop_area_ha: number;
+  unclassified_area_ha: number;
+  // Crop-wise breakdown
+  crop_acreage: Record<
+    string,
+    {
+      declared_ha: number;
+      predicted_ha: number;
+      observed_ha: number;
+      verified_ha: number;
+      plots_count: number;
+    }
+  >;
+  methodology: string;
+  data_quality_status: 'VERIFIED_GROUND_TRUTH' | 'PARTIALLY_VERIFIED' | 'PRELIMINARY_DELINEATION' | 'UNVALIDATED_MODEL';
+  data_coverage_pct: number;
+  generated_at: string;
 }
 
 export interface SatelliteSceneAsset {
@@ -755,7 +814,14 @@ export interface MobileFieldSurveyRecord {
   irrigation_type: 'Canal' | 'Borewell / Tube' | 'Drip' | 'Sprinkler' | 'Rainfed';
   photos: string[];
   field_notes?: string;
-  sync_status: 'DRAFT' | 'PENDING_SYNC' | 'SYNCHRONIZING' | 'SYNCHRONIZED' | 'FAILED';
+  sync_status:
+    | 'DRAFT'
+    | 'PENDING_SYNC'
+    | 'SYNCHRONIZING'
+    | 'SYNCHRONIZED'
+    | 'FAILED'
+    | 'SAVED_LOCALLY'
+    | 'REQUIRES_USER_ACTION';
   synced_at?: string;
   created_at: string;
 }
@@ -830,6 +896,22 @@ export interface YieldForecastRecord {
   data_sources: string[];
   forecast_date: string;
   created_by: string;
+  // Challenge Module D: Yield Forecasting Architecture & Metrics
+  uncertainty_range?: {
+    min_total_tonnes: number;
+    max_total_tonnes: number;
+    confidence_level_pct: number;
+  };
+  input_completeness_pct?: number;
+  model_version?: string;
+  model_limitations?: string[];
+  validation_metrics?: {
+    mae?: number;
+    rmse?: number;
+    r2?: number;
+    bias?: number;
+    status: string;
+  };
 }
 
 export interface DisasterAssessmentRecord {
@@ -957,7 +1039,21 @@ export interface MonitoringPeriodObservation {
     | 'Sparse / Mixed Cover'
     | 'Stable Canopy'
     | 'Unassessed';
-  health_status: 'Optimal' | 'Mild Stress' | 'High Stress' | 'Cloud Obscured' | 'Insufficient Data';
+  health_status:
+    | 'Healthy / Within expected range'
+    | 'Potential stress'
+    | 'Significant vegetation decline'
+    | 'Insufficient observations'
+    | 'Too early to assess'
+    | 'Field verification required'
+    | 'Optimal'
+    | 'Mild Stress'
+    | 'High Stress'
+    | 'Cloud Obscured'
+    | 'Insufficient Data';
+  scientific_disclaimer?: string;
+  moisture_stress_indicator?: 'ADEQUATE' | 'MILD_MOISTURE_STRESS' | 'SEVERE_MOISTURE_DEFICIT';
+  anomaly_score?: number;
   delta_ndvi_previous: number | null;
   delta_ndmi_previous: number | null;
   delta_direction: 'INCREASED' | 'DECREASED' | 'STABLE' | 'FIRST_PERIOD' | 'NO_DATA';

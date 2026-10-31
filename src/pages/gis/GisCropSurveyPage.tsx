@@ -42,11 +42,13 @@ import {
   DroneMissionRecord,
   MobileFieldSurveyRecord,
   SatelliteScene,
+  AcreageAggregation,
 } from '@/types';
 import {
   MAHARASHTRA_DISTRICTS,
   computeGeodesicMeasurements,
 } from '@/lib/geospatial';
+import { ACTIVE_PILOT_TALUKS } from '@/lib/constants';
 import { useLanguage } from '@/context/LanguageContext';
 import { localizePlotOrCropName, getGisLabel } from '@/lib/dashboard-localizer';
 
@@ -80,6 +82,10 @@ export const GisCropSurveyPage: React.FC = () => {
   const [activeDroneMission, setActiveDroneMission] = useState<DroneMissionRecord | null>(null);
   const [activeSceneFootprint, setActiveSceneFootprint] = useState<SatelliteScene | null>(null);
   const [fieldSurveys, setFieldSurveys] = useState<MobileFieldSurveyRecord[]>([]);
+
+  // Crop Area Estimation Aggregation State (Challenge Module A)
+  const [acreageSummary, setAcreageSummary] = useState<AcreageAggregation | null>(null);
+  const [showAcreagePanel, setShowAcreagePanel] = useState(false);
 
   // Register New Plot Form State
   const [formPlotName, setFormPlotName] = useState('');
@@ -151,6 +157,22 @@ export const GisCropSurveyPage: React.FC = () => {
 
     setFilteredPlots(result);
   }, [plots, districtFilter, talukFilter, cropFilter, seasonFilter, statusFilter, searchTerm]);
+
+  // Load Acreage Aggregation & Deduplication metrics (Challenge Module A)
+  useEffect(() => {
+    plotService
+      .getAcreageAggregation({
+        level: talukFilter !== 'ALL' ? 'taluk' : 'district',
+        regionName: talukFilter !== 'ALL' ? talukFilter : districtFilter !== 'ALL' ? districtFilter : 'Pune',
+        cropFilter: cropFilter !== 'ALL' ? cropFilter : undefined,
+      })
+      .then(setAcreageSummary)
+      .catch(console.error);
+  }, [districtFilter, talukFilter, cropFilter, plots]);
+
+  const isPilotZone =
+    districtFilter === 'Pune' &&
+    (talukFilter === 'ALL' || (ACTIVE_PILOT_TALUKS as readonly string[]).includes(talukFilter));
 
   // Real-time Geodesic Measurements of the current registration polygon
   const currentMeasurements = computeGeodesicMeasurements(polygonCoords);
@@ -330,11 +352,51 @@ export const GisCropSurveyPage: React.FC = () => {
             <div className="flex items-center gap-2">
               <Button
                 size="sm"
+                variant={showAcreagePanel ? 'primary' : 'outline'}
+                icon={<BarChart3 className="w-3.5 h-3.5" />}
+                onClick={() => setShowAcreagePanel(!showAcreagePanel)}
+              >
+                Crop Area Estimation
+              </Button>
+
+              <Button
+                size="sm"
                 variant="outline"
                 icon={<Download className="w-3.5 h-3.5 text-slate-600" />}
-                onClick={() => reportService.exportRegionalAnalyticsCsv(districtFilter === 'ALL' ? undefined : districtFilter)}
+                onClick={() => {
+                  if (acreageSummary) {
+                    const csv = plotService.exportAcreageCsv(acreageSummary);
+                    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = `Crop_Acreage_Estimation_${districtFilter}_${talukFilter}.csv`;
+                    a.click();
+                    URL.revokeObjectURL(url);
+                  } else {
+                    reportService.exportRegionalAnalyticsCsv(districtFilter === 'ALL' ? undefined : districtFilter);
+                  }
+                }}
               >
                 {getGisLabel('exportCsv', language)}
+              </Button>
+
+              <Button
+                size="sm"
+                variant="outline"
+                icon={<Download className="w-3.5 h-3.5 text-slate-600" />}
+                onClick={() => {
+                  const geo = plotService.exportPlotsGeoJson(filteredPlots);
+                  const blob = new Blob([geo], { type: 'application/geo+json' });
+                  const url = URL.createObjectURL(blob);
+                  const a = document.createElement('a');
+                  a.href = url;
+                  a.download = `AgriSurvey_${districtFilter}_${talukFilter}_Parcels.geojson`;
+                  a.click();
+                  URL.revokeObjectURL(url);
+                }}
+              >
+                Export GeoJSON
               </Button>
 
               <Button
@@ -346,7 +408,187 @@ export const GisCropSurveyPage: React.FC = () => {
               </Button>
             </div>
           </div>
+
+          {/* Active Pilot Geography Quick Selector */}
+          <div className="flex items-center gap-2 pt-2 border-t border-slate-100 mt-2 text-[11px]">
+            <span className="font-semibold text-slate-500">Active Maharashtra Pilot Talukas:</span>
+            {ACTIVE_PILOT_TALUKS.map((t) => (
+              <button
+                key={t}
+                onClick={() => {
+                  setDistrictFilter('Pune');
+                  setTalukFilter(t);
+                }}
+                className={`px-2 py-0.5 rounded font-bold transition-colors ${
+                  districtFilter === 'Pune' && talukFilter === t
+                    ? 'bg-emerald-700 text-white shadow-xs'
+                    : 'bg-slate-100 text-slate-700 hover:bg-emerald-50 hover:text-emerald-800'
+                }`}
+              >
+                {t}
+              </button>
+            ))}
+            <button
+              onClick={() => {
+                setDistrictFilter('Pune');
+                setTalukFilter('ALL');
+              }}
+              className="text-xs text-slate-400 hover:text-slate-600 ml-auto"
+            >
+              Reset to All Pilot Zones
+            </button>
+          </div>
         </Card>
+
+        {/* Non-Pilot Region Notice (Challenge Module E Requirement) */}
+        {!isPilotZone && (
+          <div className="p-4 rounded-xl border border-amber-300 bg-amber-50 text-amber-900 flex items-start gap-3 shadow-xs">
+            <MapPin className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+            <div className="text-xs space-y-1">
+              <strong className="block text-sm font-bold text-amber-950">
+                DATA NOT AVAILABLE FOR THIS REGION
+              </strong>
+              <p>
+                AgriSurvey AI is currently deployed in Phase 1 pilot across Maharashtra designated talukas:
+                <strong> Haveli, Baramati, Shirur, and Daund</strong> (Pune District). Land verification, drone
+                photogrammetry, and Sentinel-2 phenology matching for{' '}
+                <strong>
+                  {districtFilter} {talukFilter !== 'ALL' ? `(${talukFilter})` : ''}
+                </strong>{' '}
+                will be enabled in Phase 2 statewide rollout.
+              </p>
+              <div className="flex items-center gap-2 pt-1">
+                <span className="font-semibold text-amber-800 text-[11px]">Switch to Active Pilot Geography:</span>
+                {ACTIVE_PILOT_TALUKS.map((t) => (
+                  <button
+                    key={t}
+                    onClick={() => {
+                      setDistrictFilter('Pune');
+                      setTalukFilter(t);
+                    }}
+                    className="px-2 py-0.5 rounded bg-white text-emerald-800 border border-emerald-300 font-bold hover:bg-emerald-50 text-[11px]"
+                  >
+                    {t}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Crop Area Estimation & Deduplication Dashboard (Challenge Module A Requirement) */}
+        {showAcreagePanel && acreageSummary && (
+          <Card className="p-4 bg-white border border-emerald-200 shadow-xs space-y-3">
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-2">
+              <div>
+                <span className="text-[10px] uppercase font-bold tracking-wider text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded">
+                  Geodesic WGS84 Area Intelligence (Module A)
+                </span>
+                <h3 className="text-sm font-extrabold text-slate-900 mt-1">
+                  Crop Area Estimation & 4-Way Cadastral Accounting: {acreageSummary.region_name}
+                </h3>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-xs px-2 py-0.5 rounded bg-slate-100 text-slate-700 font-medium">
+                  Quality: <strong>{acreageSummary.data_quality_status}</strong> ({acreageSummary.data_coverage_pct}% verified)
+                </span>
+              </div>
+            </div>
+
+            {/* 4-Way Separation Stats */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
+              <div className="p-2.5 bg-slate-50 rounded-lg border border-slate-200">
+                <span className="text-slate-500 block text-[10px] font-semibold">1. Farmer Declared</span>
+                <div className="text-base font-extrabold text-slate-800 mt-0.5">
+                  {acreageSummary.farmer_declared_area_ha.toFixed(2)} ha
+                </div>
+                <span className="text-[10px] text-slate-400">
+                  {(acreageSummary.farmer_declared_area_ha * 2.471).toFixed(1)} acres
+                </span>
+              </div>
+
+              <div className="p-2.5 bg-blue-50/60 rounded-lg border border-blue-200">
+                <span className="text-blue-700 block text-[10px] font-semibold">2. ML Predicted</span>
+                <div className="text-base font-extrabold text-blue-900 mt-0.5">
+                  {acreageSummary.ml_predicted_area_ha.toFixed(2)} ha
+                </div>
+                <span className="text-[10px] text-blue-600">
+                  {(acreageSummary.ml_predicted_area_ha * 2.471).toFixed(1)} acres (Phenology)
+                </span>
+              </div>
+
+              <div className="p-2.5 bg-sky-50/60 rounded-lg border border-sky-200">
+                <span className="text-sky-700 block text-[10px] font-semibold">3. Surveyor Observed</span>
+                <div className="text-base font-extrabold text-sky-900 mt-0.5">
+                  {acreageSummary.field_observed_area_ha.toFixed(2)} ha
+                </div>
+                <span className="text-[10px] text-sky-600">
+                  {(acreageSummary.field_observed_area_ha * 2.471).toFixed(1)} acres (Mobile GPS)
+                </span>
+              </div>
+
+              <div className="p-2.5 bg-emerald-50 rounded-lg border border-emerald-200">
+                <span className="text-emerald-700 block text-[10px] font-semibold">4. Tahsildar Verified</span>
+                <div className="text-base font-extrabold text-emerald-900 mt-0.5">
+                  {acreageSummary.tahsildar_verified_area_ha.toFixed(2)} ha
+                </div>
+                <span className="text-[10px] text-emerald-600">
+                  {(acreageSummary.tahsildar_verified_area_ha * 2.471).toFixed(1)} acres (Official 7/12)
+                </span>
+              </div>
+            </div>
+
+            {/* Overlap Deduplication & Net Mapped Area */}
+            <div className="p-3 bg-amber-50/50 rounded-lg border border-amber-200 text-xs flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <span className="font-bold text-amber-900">Spatial Overlap Deduplication:</span>
+                <span className="text-slate-600 ml-1.5">
+                  Raw polygon sum: <strong>{acreageSummary.raw_polygon_sum_ha.toFixed(2)} ha</strong> | Net non-overlapping mapped ground:{' '}
+                  <strong className="text-emerald-700">{acreageSummary.net_mapped_deduplicated_ha.toFixed(2)} ha</strong>
+                </span>
+              </div>
+              <div className="text-[11px] text-amber-800 font-medium">
+                {acreageSummary.overlapping_polygons_count > 0 ? (
+                  <span>
+                    ⚠️ {acreageSummary.overlapping_polygons_count} overlapping parcel boundaries detected ({acreageSummary.overlapping_area_ha.toFixed(2)} ha duplicate avoided)
+                  </span>
+                ) : (
+                  <span>✅ 0 spatial overlap conflicts across surveyed boundaries</span>
+                )}
+              </div>
+            </div>
+
+            {/* Crop-wise Acreage Table */}
+            <div className="overflow-x-auto text-xs">
+              <table className="w-full text-left border-collapse">
+                <thead>
+                  <tr className="border-b border-slate-200 text-[11px] text-slate-500 uppercase">
+                    <th className="py-1.5 px-2">Crop / Cover</th>
+                    <th className="py-1.5 px-2">Declared (Ha)</th>
+                    <th className="py-1.5 px-2">Observed (Ha)</th>
+                    <th className="py-1.5 px-2">Verified (Ha)</th>
+                    <th className="py-1.5 px-2">Plots Count</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {Object.entries(acreageSummary.crop_acreage).map(([crop, data]) => (
+                    <tr key={crop} className="hover:bg-slate-50">
+                      <td className="py-1.5 px-2 font-semibold text-slate-800">{crop}</td>
+                      <td className="py-1.5 px-2">{data.declared_ha.toFixed(2)}</td>
+                      <td className="py-1.5 px-2 text-sky-700 font-medium">{data.observed_ha.toFixed(2)}</td>
+                      <td className="py-1.5 px-2 text-emerald-700 font-bold">{data.verified_ha.toFixed(2)}</td>
+                      <td className="py-1.5 px-2 text-slate-500">{data.plots_count}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            <div className="text-[10px] text-slate-400 italic">
+              Methodology: {acreageSummary.methodology}
+            </div>
+          </Card>
+        )}
 
         {/* Main Geospatial Workspace (Grid: 8 cols Map, 4 cols Intelligence Panel) */}
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">

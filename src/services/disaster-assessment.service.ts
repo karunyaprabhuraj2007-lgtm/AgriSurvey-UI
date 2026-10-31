@@ -177,6 +177,30 @@ export class DisasterAssessmentService {
     };
 
     mockDb.disasterAssessments.unshift(assessment);
+
+    // Module F: Route Critical/Severe Disaster Screening to Inspection Queue
+    if (severity === 'CRITICAL' || severity === 'SEVERE') {
+      const existingInspection = mockDb.inspections.find(
+        (i) => i.property_id === plot.property_id && i.inspection_status === 'ASSIGNED'
+      );
+      if (!existingInspection) {
+        mockDb.inspections.unshift({
+          id: `insp-disaster-${Date.now()}`,
+          application_id: `app-dis-${plot.id}`,
+          property_id: plot.property_id,
+          assigned_worker_id: 'usr-field-01',
+          assigned_tahsildar_id: 'usr-tahsildar-01',
+          inspection_status: 'ASSIGNED',
+          scheduled_at: null,
+          started_at: null,
+          completed_at: null,
+          field_notes: `Disaster Screening Alert (${params.eventType}): ${assessment.affected_percentage}% of plot damaged (${assessment.affected_area_hectares} ha). Rapid ground verification required for compensation processing.`,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        });
+      }
+    }
+
     mockDb.addAuditLog('DISASTER_SCREENING_COMPLETED', 'disaster_assessments', assessment.id, null, {
       event_reference: assessment.event_reference,
       plot_reference: plot.plot_reference,

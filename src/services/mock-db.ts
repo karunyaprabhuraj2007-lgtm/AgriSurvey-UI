@@ -1906,7 +1906,15 @@ export class MockDatabase {
 
     // Continuous 15-Day Satellite Monitoring Collections
     this.monitoringAreas = getStorage('monitoringAreas', INITIAL_MONITORING_AREAS);
-    this.periodObservations = getStorage('periodObservations', INITIAL_PERIOD_OBSERVATIONS);
+    this.periodObservations = getStorage('periodObservations', INITIAL_PERIOD_OBSERVATIONS).map(
+      (obs: MonitoringPeriodObservation) => ({
+        ...obs,
+        scientific_disclaimer:
+          obs.scientific_disclaimer ||
+          'These are remote-sensing vegetation monitoring classifications, not on-site plant disease diagnoses.',
+        moisture_stress_indicator: obs.moisture_stress_indicator || 'ADEQUATE',
+      })
+    );
     this.inspectionQueue = getStorage('inspectionQueue', INITIAL_INSPECTION_QUEUE);
 
     const savedUserId = isLocalStorageAvailable() ? localStorage.getItem('agrisurvey_current_user_id') : null;

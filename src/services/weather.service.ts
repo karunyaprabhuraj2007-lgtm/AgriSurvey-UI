@@ -130,6 +130,8 @@ export class WeatherService {
           { date: '2026-10-28', temp_max_celsius: 31.5, temp_min_celsius: 19.8, precipitation_mm: 0, rain_probability: 5 },
           { date: '2026-10-29', temp_max_celsius: 32.2, temp_min_celsius: 21.0, precipitation_mm: 1.2, rain_probability: 35 },
           { date: '2026-10-30', temp_max_celsius: 30.0, temp_min_celsius: 21.5, precipitation_mm: 2.8, rain_probability: 60 },
+          { date: '2026-10-31', temp_max_celsius: 29.8, temp_min_celsius: 20.8, precipitation_mm: 0.5, rain_probability: 20 },
+          { date: '2026-11-01', temp_max_celsius: 30.5, temp_min_celsius: 20.0, precipitation_mm: 0.0, rain_probability: 10 },
         ],
         provider: 'Open-Meteo (Offline Cache)',
         quality_status: 'CACHED',

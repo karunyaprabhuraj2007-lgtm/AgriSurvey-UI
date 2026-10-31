@@ -465,14 +465,21 @@ export class SatelliteMonitoringService {
       },
       growth_stage: hasData ? STAGE_MAP[g.stage] : 'Unassessed',
       health_status: !hasData
-        ? r.status === 'cloudy' || r.status === 'partly_cloudy'
-          ? 'Cloud Obscured'
-          : 'Insufficient Data'
-        : periodAlerts.some((a) => a.severity === 'critical')
-        ? 'High Stress'
-        : periodAlerts.length
-        ? 'Mild Stress'
-        : 'Optimal',
+        ? 'Insufficient observations'
+        : (g.stage === 'Bare soil / pre-sowing' || g.stage === 'Emergence / establishment') && i <= 1
+        ? 'Too early to assess'
+        : periodAlerts.some((a) => a.severity === 'critical') || (deltaNdvi !== null && deltaNdvi <= -0.15)
+        ? 'Significant vegetation decline'
+        : periodAlerts.length > 0 || (deltaNdvi !== null && deltaNdvi <= -0.07)
+        ? 'Potential stress'
+        : 'Healthy / Within expected range',
+      moisture_stress_indicator:
+        hasData && s && s.ndmiMean != null && s.ndmiMean < 0.05
+          ? 'SEVERE_MOISTURE_DEFICIT'
+          : hasData && s && s.ndmiMean != null && s.ndmiMean < 0.15
+          ? 'MILD_MOISTURE_STRESS'
+          : 'ADEQUATE',
+      scientific_disclaimer: 'These are remote-sensing vegetation monitoring classifications, not on-site plant disease diagnoses.',
       delta_ndvi_previous: deltaNdvi,
       delta_ndmi_previous: deltaNdmi,
       delta_direction: !hasData

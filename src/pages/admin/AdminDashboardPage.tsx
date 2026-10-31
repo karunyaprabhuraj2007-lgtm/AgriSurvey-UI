@@ -39,7 +39,7 @@ import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
 import { Modal } from '@/components/ui/Modal';
-import { analyticsService, DashboardStats } from '@/services/analytics.service';
+import { analyticsService, DashboardStats, GovernmentDecisionMetrics } from '@/services/analytics.service';
 import { notificationService } from '@/services/notification.service';
 import { plantIntelligenceService } from '@/services/plant-intelligence.service';
 import { mockDb } from '@/services/mock-db';
@@ -66,6 +66,7 @@ export const AdminDashboardPage: React.FC = () => {
     setActiveTab(tabForPath(pathname));
   }
   const [stats, setStats] = useState<DashboardStats | null>(null);
+  const [govMetrics, setGovMetrics] = useState<GovernmentDecisionMetrics | null>(null);
   const [timelineData, setTimelineData] = useState<any[]>([]);
   const [districtData, setDistrictData] = useState<any[]>([]);
   const [cropData, setCropData] = useState<any[]>([]);
@@ -91,7 +92,7 @@ export const AdminDashboardPage: React.FC = () => {
   }, []);
 
   const loadAllAdminData = async () => {
-    const [s, t, d, c, a, sr, jobs] = await Promise.all([
+    const [s, t, d, c, a, sr, jobs, gm] = await Promise.all([
       analyticsService.getDashboardStats(),
       analyticsService.getRegistrationsOverTime(),
       analyticsService.getDistrictDistribution(),
@@ -99,6 +100,7 @@ export const AdminDashboardPage: React.FC = () => {
       analyticsService.getAuditLogs(),
       analyticsService.getStaffRegions(),
       notificationService.getNotificationJobs(),
+      analyticsService.getGovernmentDecisionMetrics(),
     ]);
 
     setStats(s);
@@ -108,6 +110,7 @@ export const AdminDashboardPage: React.FC = () => {
     setAuditLogs(a);
     setStaffRegions(sr);
     setSmsJobs(jobs);
+    setGovMetrics(gm);
 
     const ths = await plantIntelligenceService.getCropThresholds();
     setCropThresholds(ths);
@@ -224,6 +227,77 @@ export const AdminDashboardPage: React.FC = () => {
                 <div className="text-xs text-emerald-600 font-semibold mt-1">Certified reports compiled</div>
               </Card>
             </div>
+
+            {/* Government Spatial Intelligence & Policy Dashboard (Challenge Module G) */}
+            {govMetrics && (
+              <Card className="p-5 bg-gradient-to-r from-emerald-950 via-slate-900 to-teal-950 text-white border-none shadow-md space-y-4">
+                <div className="flex flex-wrap items-center justify-between gap-2 border-b border-white/10 pb-3">
+                  <div>
+                    <span className="text-[10px] font-mono uppercase tracking-wider font-bold text-emerald-400 bg-emerald-950/60 px-2 py-0.5 rounded border border-emerald-500/30">
+                      Module G — Government Decision Support
+                    </span>
+                    <h3 className="text-base font-extrabold text-white mt-1">
+                      Maharashtra Spatial Agricultural Intelligence & Policy Indicators
+                    </h3>
+                  </div>
+                  <span className="text-xs text-white/60">
+                    Active Pilot Zones: Haveli, Baramati, Shirur, Daund
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
+                  <div className="p-3 bg-white/5 rounded-lg border border-white/10">
+                    <span className="text-white/60 block text-[10px]">1. Kharif Crop Acreage</span>
+                    <strong className="text-lg text-emerald-300 font-bold">{govMetrics.kharifAcreageMapped} Acres</strong>
+                    <span className="block text-[10px] text-white/40">Sugarcane, Soybean, Cotton</span>
+                  </div>
+
+                  <div className="p-3 bg-white/5 rounded-lg border border-white/10">
+                    <span className="text-white/60 block text-[10px]">2. Rabi Crop Acreage</span>
+                    <strong className="text-lg text-teal-300 font-bold">{govMetrics.rabiAcreageMapped} Acres</strong>
+                    <span className="block text-[10px] text-white/40">Wheat, Gram, Rabi Onion</span>
+                  </div>
+
+                  <div className="p-3 bg-white/5 rounded-lg border border-white/10">
+                    <span className="text-white/60 block text-[10px]">3. Subsidy Pass Rate</span>
+                    <strong className="text-lg text-amber-300 font-bold">{govMetrics.subsidyVerificationRatePct}%</strong>
+                    <span className="block text-[10px] text-white/40">7/12 & Ground Photo Verified</span>
+                  </div>
+
+                  <div className="p-3 bg-white/5 rounded-lg border border-white/10">
+                    <span className="text-white/60 block text-[10px]">4. Overlap Deduplicated</span>
+                    <strong className="text-lg text-sky-300 font-bold">{govMetrics.nonOverlappingNetAreaHa} Ha</strong>
+                    <span className="block text-[10px] text-white/40">{govMetrics.overlapAvoidedHa} ha duplicate avoided</span>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs pt-1">
+                  <div className="p-3 bg-white/5 rounded-lg border border-white/10">
+                    <span className="text-white/60 block text-[10px]">5. Disaster Screened Area</span>
+                    <strong className="text-lg text-rose-300 font-bold">{govMetrics.criticalDamageHectares} Ha</strong>
+                    <span className="block text-[10px] text-rose-300/80">Pending Tahsildar survey</span>
+                  </div>
+
+                  <div className="p-3 bg-white/5 rounded-lg border border-white/10">
+                    <span className="text-white/60 block text-[10px]">6. High Moisture Stress</span>
+                    <strong className="text-lg text-amber-300 font-bold">{govMetrics.highStressMoistureHectares} Ha</strong>
+                    <span className="block text-[10px] text-amber-300/80">NDWI / NDMI Deficit</span>
+                  </div>
+
+                  <div className="p-3 bg-white/5 rounded-lg border border-white/10">
+                    <span className="text-white/60 block text-[10px]">7. Crop Discrepancies</span>
+                    <strong className="text-lg text-purple-300 font-bold">{govMetrics.discrepanciesCount} Parcels</strong>
+                    <span className="block text-[10px] text-white/40">Phenology vs Farmer Claim</span>
+                  </div>
+
+                  <div className="p-3 bg-white/5 rounded-lg border border-white/10">
+                    <span className="text-white/60 block text-[10px]">8. Resolution Turnaround</span>
+                    <strong className="text-lg text-emerald-300 font-bold">{govMetrics.avgResolutionTurnaroundDays} Days</strong>
+                    <span className="block text-[10px] text-white/40">Officer dispatch to verify</span>
+                  </div>
+                </div>
+              </Card>
+            )}
 
             {/* Recharts Analytics Charts (Section 18 Requirement) */}
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">

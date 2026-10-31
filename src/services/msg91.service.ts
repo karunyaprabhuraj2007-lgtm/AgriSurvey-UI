@@ -19,16 +19,21 @@ export interface SendApprovalSmsParams {
 
 export class Msg91Service {
   private getConfig(): Msg91Config {
+    const isBrowser = typeof window !== 'undefined';
     const env = typeof import.meta !== 'undefined' && (import.meta as any).env ? (import.meta as any).env : {};
+    
+    // Security Guard (Module J): MSG91 Auth Key must never be embedded in browser client bundles
+    const nodeEnv = typeof process !== 'undefined' && process.env ? process.env : {};
+    const authKey = isBrowser ? undefined : (nodeEnv.MSG91_AUTH_KEY || env.MSG91_AUTH_KEY);
 
     return {
-      authKey: env.MSG91_AUTH_KEY || env.VITE_MSG91_AUTH_KEY,
-      senderId: env.MSG91_SENDER_ID || env.VITE_MSG91_SENDER_ID || 'AGRSUR',
-      templateId: env.MSG91_APPROVAL_TEMPLATE_ID || env.VITE_MSG91_APPROVAL_TEMPLATE_ID,
+      authKey,
+      senderId: env.MSG91_SENDER_ID || nodeEnv.MSG91_SENDER_ID || 'AGRSUR',
+      templateId: env.MSG91_APPROVAL_TEMPLATE_ID || nodeEnv.MSG91_APPROVAL_TEMPLATE_ID,
       loginUrl:
         env.APP_LOGIN_URL ||
         env.VITE_APP_LOGIN_URL ||
-        (typeof window !== 'undefined' ? `${window.location.origin}/auth/login` : 'http://localhost:5173/auth/login'),
+        (isBrowser ? `${window.location.origin}/auth/login` : 'http://localhost:5173/auth/login'),
     };
   }
 

@@ -357,3 +357,138 @@ export const MAHARASHTRA_DISTRICTS: MaharashtraDistrict[] = [
     ],
   },
 ];
+
+/**
+ * Validates polygon geometry integrity
+ */
+export function validatePolygonGeometry(coordinates: [number, number][]): { isValid: boolean; error?: string } {
+  if (!coordinates || !Array.isArray(coordinates)) {
+    return { isValid: false, error: 'Coordinates must be an array of [latitude, longitude] pairs.' };
+  }
+  if (coordinates.length < 3) {
+    return { isValid: false, error: 'A polygon must have at least 3 vertices.' };
+  }
+  for (let i = 0; i < coordinates.length; i++) {
+    const pt = coordinates[i];
+    if (!Array.isArray(pt) || pt.length < 2 || !Number.isFinite(pt[0]) || !Number.isFinite(pt[1])) {
+      return { isValid: false, error: `Vertex at index ${i} contains non-numeric or invalid coordinates.` };
+    }
+    // Check bounds for Maharashtra (approx lat 15 to 22.5, lon 72 to 81.5)
+    if (pt[0] < 15.0 || pt[0] > 23.0 || pt[1] < 72.0 || pt[1] > 82.0) {
+      return { isValid: false, error: `Vertex at index ${i} (${pt[0]}, ${pt[1]}) is outside Maharashtra geographic bounds.` };
+    }
+  }
+  return { isValid: true };
+}
+
+/**
+ * Detects whether two polygons overlap and computes intersection area on WGS84 ellipsoid.
+ */
+export function checkPolygonsOverlap(
+  polyA: [number, number][],
+  polyB: [number, number][]
+): { overlaps: boolean; overlapAreaSqm: number; overlapHectares: number; overlapAcres: number } {
+  const empty = { overlaps: false, overlapAreaSqm: 0, overlapHectares: 0, overlapAcres: 0 };
+  if (!polyA || polyA.length < 3 || !polyB || polyB.length < 3) return empty;
+
+  const measA = computeGeodesicMeasurements(polyA);
+  const measB = computeGeodesicMeasurements(polyB);
+
+  if (!doBBoxesIntersect(measA.bbox, measB.bbox)) return empty;
+
+  // Compute intersecting bounding box
+  const minLat = Math.max(measA.bbox.minLat, measB.bbox.minLat);
+  const maxLat = Math.min(measA.bbox.maxLat, measB.bbox.maxLat);
+  const minLon = Math.max(measA.bbox.minLon, measB.bbox.minLon);
+  const maxLon = Math.min(measA.bbox.maxLon, measB.bbox.maxLon);
+
+  if (maxLat <= minLat || maxLon <= minLon) return empty;
+
+  // Sample a regular grid of points over the intersection bbox to test dual inclusion
+  const GRID_STEPS = 25; // 25x25 = 625 sample points
+  let dualPoints = 0;
+  const latStep = (maxLat - minLat) / GRID_STEPS;
+  const lonStep = (maxLon - minLon) / GRID_STEPS;
+
+  for (let r = 0; r < GRID_STEPS; r++) {
+    const lat = minLat + (r + 0.5) * latStep;
+    for (let c = 0; c < GRID_STEPS; c++) {
+      const lon = minLon + (c + 0.5) * lonStep;
+      if (isPointInPolygon([lat, lon], polyA) && isPointInPolygon([lat, lon], polyB)) {
+        dualPoints++;
+      }
+    }
+  }
+
+  if (dualPoints === 0) return empty;
+
+  // Geodesic area of the intersection bbox
+  const bboxCorners: [number, number][] = [
+    [minLat, minLon],
+    [maxLat, minLon],
+    [maxLat, maxLon],
+    [minLat, maxLon],
+  ];
+  const bboxAreaSqm = calculateGeodesicAreaSquareMeters(bboxCorners);
+  const overlapAreaSqm = Math.round((dualPoints / (GRID_STEPS * GRID_STEPS)) * bboxAreaSqm * 100) / 100;
+  const overlapHectares = Math.round((overlapAreaSqm / 10000) * 1000) / 1000;
+  const overlapAcres = Math.round(overlapHectares * 2.4710538 * 1000) / 1000;
+
+  return {
+    overlaps: overlapAreaSqm > 0,
+    overlapAreaSqm,
+    overlapHectares,
+    overlapAcres,
+  };
+}
+
+/**
+ * Computes net non-overlapping mapped area for a list of polygon geometries,
+ * preventing double-counting of overlapping cadastral parcels.
+ */
+export function computeNetNonOverlappingArea(polygons: [number, number][][]): {
+  rawSumAreaSqm: number;
+  netMappedAreaSqm: number;
+  totalOverlapAreaSqm: number;
+  overlappingPairsCount: number;
+  rawSumHectares: number;
+  netMappedHectares: number;
+  rawSumAcres: number;
+  netMappedAcres: number;
+} {
+  let rawSumAreaSqm = 0;
+  for (const poly of polygons) {
+    rawSumAreaSqm += calculateGeodesicAreaSquareMeters(poly);
+  }
+
+  let totalOverlapAreaSqm = 0;
+  let overlappingPairsCount = 0;
+
+  for (let i = 0; i < polygons.length; i++) {
+    for (let j = i + 1; j < polygons.length; j++) {
+      const overlap = checkPolygonsOverlap(polygons[i], polygons[j]);
+      if (overlap.overlaps && overlap.overlapAreaSqm > 0) {
+        totalOverlapAreaSqm += overlap.overlapAreaSqm;
+        overlappingPairsCount++;
+      }
+    }
+  }
+
+  const netMappedAreaSqm = Math.max(0, Math.round((rawSumAreaSqm - totalOverlapAreaSqm) * 100) / 100);
+  const rawSumHectares = Math.round((rawSumAreaSqm / 10000) * 1000) / 1000;
+  const netMappedHectares = Math.round((netMappedAreaSqm / 10000) * 1000) / 1000;
+  const rawSumAcres = Math.round(rawSumHectares * 2.4710538 * 1000) / 1000;
+  const netMappedAcres = Math.round(netMappedHectares * 2.4710538 * 1000) / 1000;
+
+  return {
+    rawSumAreaSqm: Math.round(rawSumAreaSqm * 100) / 100,
+    netMappedAreaSqm,
+    totalOverlapAreaSqm: Math.round(totalOverlapAreaSqm * 100) / 100,
+    overlappingPairsCount,
+    rawSumHectares,
+    netMappedHectares,
+    rawSumAcres,
+    netMappedAcres,
+  };
+}
+

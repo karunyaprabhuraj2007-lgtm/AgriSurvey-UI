@@ -13,6 +13,26 @@ import { MobileFieldSurveyRecord, FarmPlot } from '@/types';
 
 const OFFLINE_SURVEY_KEY = 'agrisurvey_offline_field_surveys';
 
+export function getSyncStatusLabel(status: MobileFieldSurveyRecord['sync_status']): string {
+  switch (status) {
+    case 'SAVED_LOCALLY':
+    case 'DRAFT':
+      return 'Saved locally';
+    case 'PENDING_SYNC':
+      return 'Waiting to synchronize';
+    case 'SYNCHRONIZING':
+      return 'Synchronizing';
+    case 'SYNCHRONIZED':
+      return 'Successfully synchronized';
+    case 'FAILED':
+      return 'Synchronization failed';
+    case 'REQUIRES_USER_ACTION':
+      return 'Requires user action';
+    default:
+      return status;
+  }
+}
+
 export interface SubmitFieldSurveyParams {
   plotId: string;
   surveyorId: string;
@@ -101,7 +121,7 @@ export class MobileSurveyService {
    */
   async syncPendingSurveys(): Promise<{ syncedCount: number; errors: string[] }> {
     const pending = mockDb.mobileSurveys.filter(
-      (s) => s.sync_status === 'PENDING_SYNC' || s.sync_status === 'DRAFT'
+      (s) => s.sync_status === 'PENDING_SYNC' || s.sync_status === 'SAVED_LOCALLY' || s.sync_status === 'DRAFT'
     );
 
     let syncedCount = 0;

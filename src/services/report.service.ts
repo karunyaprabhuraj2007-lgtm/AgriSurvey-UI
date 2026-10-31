@@ -1194,6 +1194,89 @@ export class ReportService {
       doc.save(`Disaster_Damage_Assessment_Report.pdf`);
     }
   }
+
+  /**
+   * Export Statutory Spatial Report as Standardized GeoJSON FeatureCollection (Module K)
+   */
+  exportStatutoryReportGeoJson(reportType: string, options?: { taluk?: string; district?: string }): string {
+    let plots = [...mockDb.farmPlots];
+
+    if (options?.district && options.district !== 'ALL') {
+      plots = plots.filter((p) => p.district.toLowerCase() === options.district!.toLowerCase());
+    }
+    if (options?.taluk && options.taluk !== 'ALL') {
+      plots = plots.filter((p) => p.taluk.toLowerCase() === options.taluk!.toLowerCase());
+    }
+
+    const features = plots.map((plot) => {
+      const ring = (plot.boundary_coordinates || []).map(([lat, lon]) => [lon, lat]);
+      if (ring.length > 0) {
+        const first = ring[0];
+        const last = ring[ring.length - 1];
+        if (first[0] !== last[0] || first[1] !== last[1]) {
+          ring.push([first[0], first[1]]);
+        }
+      }
+
+      return {
+        type: 'Feature',
+        properties: {
+          id: plot.id,
+          plot_reference: plot.plot_reference,
+          survey_number: plot.survey_number,
+          subdivision: plot.subdivision_number,
+          village: plot.village,
+          taluk: plot.taluk,
+          district: plot.district,
+          state: plot.state,
+          crop_type: plot.crop_type,
+          area_sqm: plot.area_sqm,
+          area_hectares: plot.area_hectares,
+          area_acres: plot.area_acres,
+          is_cadastral_verified: plot.is_cadastral_verified,
+          report_type: reportType,
+        },
+        geometry: {
+          type: 'Polygon',
+          coordinates: [ring],
+        },
+      };
+    });
+
+    const geoJsonString = JSON.stringify(
+      {
+        type: 'FeatureCollection',
+        name: `AgriSurvey_Report_${reportType}`,
+        crs: {
+          type: 'name',
+          properties: { name: 'urn:ogc:def:crs:OGC:1.3:CRS84' },
+        },
+        metadata: {
+          report_name: reportType,
+          authority: 'Government of Maharashtra — Department of Agriculture & Revenue',
+          platform: 'AgriSurvey AI (Rehydria Technology / GreenMinds)',
+          exported_at: new Date().toISOString(),
+          crs_specification: 'EPSG:4326 (WGS 84 Ellipsoidal Coordinates)',
+          parcels_count: features.length,
+        },
+        features,
+      },
+      null,
+      2
+    );
+
+    if (typeof window !== 'undefined' && typeof document !== 'undefined') {
+      const blob = new Blob([geoJsonString], { type: 'application/geo+json;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `AgriSurvey_${reportType}_Spatial.geojson`;
+      a.click();
+      URL.revokeObjectURL(url);
+    }
+
+    return geoJsonString;
+  }
 }
 
 export const reportService = new ReportService();

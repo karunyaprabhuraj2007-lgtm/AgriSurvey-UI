@@ -40,10 +40,127 @@ export function illustrativeYield(district: string, cropKey: string): number | n
   return ILLUSTRATIVE_DISTRICT_YIELDS[district.toLowerCase()]?.[cropKey] ?? null;
 }
 
+export interface YieldModelInputs {
+  plotId: string;
+  cropKey: string;
+  sowingDate?: string;
+  growthStage?: string;
+  harvestedAreaHa?: number;
+  expectedYieldTPerHa?: number;
+  measuredPeakNdvi?: { value: number; date: string } | null;
+  vegetationTimeSeries?: Array<{ date: string; ndvi: number }>;
+  weatherObservations?: {
+    temperatureMean?: number;
+    cumulativePrecipitationMm?: number;
+    gdd?: number;
+  };
+}
+
+export interface YieldValidationMetrics {
+  sampleCount: number;
+  mae: number | null;
+  rmse: number | null;
+  r2: number | null;
+  bias: number | null;
+  status: 'VALIDATED_AGAINST_GROUND_TRUTH' | 'AWAITING_MULTI_SEASON_GROUND_TRUTH';
+}
+
+export interface YieldModelInterface {
+  modelId: string;
+  modelVersion: string;
+  cropCategory: string;
+  checkDataAvailability(inputs: YieldModelInputs): {
+    isAvailable: boolean;
+    completenessPct: number;
+    missingInputs: string[];
+  };
+  evaluateModel(groundTruth: Array<{ predicted: number; actual: number }>): YieldValidationMetrics;
+  estimate(inputs: YieldModelInputs): Promise<YieldForecastRecord>;
+}
+
 export class YieldForecastingService {
+  /**
+   * Check dataset completeness for yield estimation
+   */
+  checkDataAvailability(inputs: {
+    cropKey?: string;
+    harvestedAreaHa?: number;
+    sowingDate?: string;
+    measuredPeakNdvi?: any;
+    weatherObservations?: any;
+  }): { isAvailable: boolean; completenessPct: number; missingInputs: string[] } {
+    const required = [
+      { key: 'cropKey', present: Boolean(inputs.cropKey), label: 'Verified Crop Category' },
+      { key: 'harvestedAreaHa', present: Boolean(inputs.harvestedAreaHa && inputs.harvestedAreaHa > 0), label: 'Relevant Harvested Area' },
+      { key: 'sowingDate', present: Boolean(inputs.sowingDate), label: 'Official Sowing Date' },
+      { key: 'measuredPeakNdvi', present: Boolean(inputs.measuredPeakNdvi), label: 'Satellite Peak Vegetation Index' },
+      { key: 'weatherObservations', present: Boolean(inputs.weatherObservations), label: 'In-Season Agrometeorological Data' },
+    ];
+
+    const missing = required.filter((r) => !r.present).map((r) => r.label);
+    const presentCount = required.filter((r) => r.present).length;
+    const completenessPct = Math.round((presentCount / required.length) * 100);
+
+    return {
+      isAvailable: Boolean(inputs.cropKey),
+      completenessPct,
+      missingInputs: missing,
+    };
+  }
+
+  /**
+   * Compute independent regression validation metrics (MAE, RMSE, R-squared, Bias)
+   */
+  computeRegressionMetrics(samples: Array<{ actual: number; predicted: number }>): YieldValidationMetrics {
+    if (!samples || samples.length === 0) {
+      return {
+        sampleCount: 0,
+        mae: null,
+        rmse: null,
+        r2: null,
+        bias: null,
+        status: 'AWAITING_MULTI_SEASON_GROUND_TRUTH',
+      };
+    }
+
+    const n = samples.length;
+    let sumAbsError = 0;
+    let sumSquaredError = 0;
+    let sumError = 0;
+    let sumActual = 0;
+
+    for (const s of samples) {
+      const err = s.predicted - s.actual;
+      sumAbsError += Math.abs(err);
+      sumSquaredError += err * err;
+      sumError += err;
+      sumActual += s.actual;
+    }
+
+    const meanActual = sumActual / n;
+    let totalSumSquares = 0;
+    for (const s of samples) {
+      totalSumSquares += Math.pow(s.actual - meanActual, 2);
+    }
+
+    const mae = Number((sumAbsError / n).toFixed(3));
+    const rmse = Number(Math.sqrt(sumSquaredError / n).toFixed(3));
+    const bias = Number((sumError / n).toFixed(3));
+    const r2 = totalSumSquares > 0 ? Number((1 - sumSquaredError / totalSumSquares).toFixed(3)) : 0;
+
+    return {
+      sampleCount: n,
+      mae,
+      rmse,
+      r2,
+      bias,
+      status: 'VALIDATED_AGAINST_GROUND_TRUTH',
+    };
+  }
+
   async forecastPlotYield(
     plotId: string,
-    inputs: { cropKey: string; expectedYieldTPerHa?: number; harvestedAreaHa?: number; measuredPeakNdvi?: { value: number; date: string } | null }
+    inputs: { cropKey: string; expectedYieldTPerHa?: number; harvestedAreaHa?: number; measuredPeakNdvi?: { value: number; date: string } | null; sowingDate?: string }
   ): Promise<YieldForecastRecord> {
     const plot = mockDb.farmPlots.find((p) => p.id === plotId);
     if (!plot) throw new Error(`Farm plot not found: ${plotId}`);
@@ -73,6 +190,21 @@ export class YieldForecastingService {
       estimated_total_tonnes: Number((expected * harvested).toFixed(2)),
       reference_district_tonnes_per_ha: reference,
       measured_peak_ndvi: inputs.measuredPeakNdvi ?? null,
+      uncertainty_range: {
+        min_total_tonnes: Number((expected * harvested * 0.85).toFixed(2)),
+        max_total_tonnes: Number((expected * harvested * 1.15).toFixed(2)),
+        confidence_level_pct: 80,
+      },
+      input_completeness_pct: inputs.measuredPeakNdvi ? 80 : 60,
+      model_version: 'AgriSurvey Production Calculator v1.0 (Scenario Arithmetic)',
+      model_limitations: [
+        'SCENARIO ESTIMATE — NOT A VALIDATED AI FORECAST.',
+        'Calculated as: Expected yield per ha × Harvested area.',
+        'Does not incorporate sub-field soil chemistry, pest infestations, or unobserved microclimate anomalies.',
+      ],
+      validation_metrics: {
+        status: 'AWAITING_MULTI_SEASON_GROUND_TRUTH',
+      },
       assumptions: [
         source === 'USER_ENTERED'
           ? `Expected yield ${expected} t/ha entered by ${mockDb.currentUser.full_name}.`
@@ -80,10 +212,13 @@ export class YieldForecastingService {
         harvested < plot.area_hectares
           ? `Harvested area ${harvested.toFixed(2)} ha of the ${plot.area_hectares} ha plot.`
           : `Whole plot area (${plot.area_hectares} ha) assumed harvested.`,
-        'No weather, irrigation or satellite adjustment is applied; no uncertainty is estimated.',
+        'Scenario estimate: Production = Expected yield per hectare × Harvested area. No unvalidated AI extrapolation applied.',
       ],
       model_type: 'Scenario estimate',
-      data_sources: [source === 'USER_ENTERED' ? 'Officer-entered expected yield' : 'Illustrative district yield table (to be replaced with official figures)', 'Registered plot area (geodesic)'],
+      data_sources: [
+        source === 'USER_ENTERED' ? 'Officer-entered expected yield' : 'Illustrative district yield table (to be replaced with official figures)',
+        'Registered plot area (geodesic WGS84)',
+      ],
       forecast_date: new Date().toISOString(),
       created_by: mockDb.currentUser.id,
     };

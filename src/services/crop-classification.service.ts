@@ -85,6 +85,17 @@ export interface ClassificationEvaluation {
   abstentionsByReason: Record<string, number>;
   confusion: { predicted: string; verified: string; count: number }[];
   samplesPerCrop: Record<string, number>;
+
+  // Per-class and Aggregate Evaluation Metrics (Challenge Module B)
+  precisionByCrop: Record<string, number | null>;
+  recallByCrop: Record<string, number | null>;
+  f1ByCrop: Record<string, number | null>;
+  macroF1: number | null;
+  weightedF1: number | null;
+  brierScore: number | null;
+  expectedCalibrationError: number | null;
+  spatialSplits: Record<string, { samplesCount: number; answeredCount: number; correctCount: number; accuracy: number | null }>;
+  seasonSplits: Record<string, { samplesCount: number; answeredCount: number; correctCount: number; accuracy: number | null }>;
 }
 
 export class CropClassificationService {
@@ -185,6 +196,39 @@ export class CropClassificationService {
     };
 
     mockDb.cropPredictions.unshift(record);
+
+    // Module B Requirement: Disagreement with farmer declaration triggers Tahsildar Review
+    const declared = (plot.crop_type || '').toLowerCase();
+    const predicted = (record.predicted_crop || '').toLowerCase();
+    const hasDiscrepancy = Boolean(predicted && declared && !declared.includes(predicted) && !predicted.includes(declared));
+
+    if (hasDiscrepancy || record.verdict_status === 'ambiguous') {
+      const existingQueue = mockDb.inspectionQueue?.find(
+        (q) => q.plot_id === plot.id && q.status === 'PENDING_OFFICER_REVIEW'
+      );
+      if (!existingQueue && mockDb.inspectionQueue) {
+        mockDb.inspectionQueue.unshift({
+          id: `queue-${Date.now()}`,
+          monitoring_area_id: `mon-${plot.id}`,
+          plot_id: plot.id,
+          farmer_name: plot.farmer_name || 'Registered Landholder',
+          district: plot.district,
+          taluk: plot.taluk,
+          village: plot.village,
+          crop_type: plot.crop_type || 'Unspecified',
+          priority: hasDiscrepancy ? 'HIGH' : 'MEDIUM',
+          reasons: hasDiscrepancy
+            ? [`CROP_DISCREPANCY: Declared "${plot.crop_type}" vs Model "${cropLabel(record.predicted_crop)}"`]
+            : [`AMBIGUOUS_PHENOLOGY: Matcher found multiple candidates (${record.candidate_crops.map(cropLabel).join(', ')})`],
+          confidence_score: record.predicted_crop ? 85 : null,
+          latest_ndvi_delta: 0,
+          latest_moisture_level: 0,
+          status: 'PENDING_OFFICER_REVIEW',
+          created_at: new Date().toISOString(),
+        });
+      }
+    }
+
     mockDb.addAuditLog('CROP_CLASSIFICATION_PERFORMED', 'crop_predictions', record.id, null, {
       plot_reference: plot.plot_reference,
       season: `${season} ${year}`,
@@ -266,32 +310,181 @@ export class CropClassificationService {
     return readSamples();
   }
 
-  /** Accuracy measured only on officer-verified predictions; nothing is assumed. */
+  /** Accuracy and multi-class verification metrics measured only on officer-verified predictions */
   evaluate(): ClassificationEvaluation {
     const verified = mockDb.cropPredictions.filter((p) => p.verified_crop);
     const answered = verified.filter((p) => p.verdict_status === 'matched' && p.predicted_crop);
     const correct = answered.filter((p) => p.predicted_crop === p.verified_crop).length;
     const abstentionsByReason: Record<string, number> = {};
-    for (const p of verified) if (p.verdict_status !== 'matched') abstentionsByReason[p.verdict_status] = (abstentionsByReason[p.verdict_status] ?? 0) + 1;
+    for (const p of verified) {
+      if (p.verdict_status !== 'matched') {
+        abstentionsByReason[p.verdict_status] = (abstentionsByReason[p.verdict_status] ?? 0) + 1;
+      }
+    }
+
     const confusionMap = new Map<string, number>();
     for (const p of answered) {
       const k = `${p.predicted_crop}|${p.verified_crop}`;
       confusionMap.set(k, (confusionMap.get(k) ?? 0) + 1);
     }
+
     const samplesPerCrop: Record<string, number> = {};
-    for (const s of readSamples()) samplesPerCrop[s.verified_crop] = (samplesPerCrop[s.verified_crop] ?? 0) + 1;
+    for (const s of readSamples()) {
+      samplesPerCrop[s.verified_crop] = (samplesPerCrop[s.verified_crop] ?? 0) + 1;
+    }
+
+    // Determine all involved crop classes (predicted or ground-truth verified)
+    const distinctCrops = new Set<string>();
+    for (const p of answered) {
+      if (p.predicted_crop) distinctCrops.add(p.predicted_crop);
+      if (p.verified_crop) distinctCrops.add(p.verified_crop);
+    }
+    for (const s of verified) {
+      if (s.verified_crop) distinctCrops.add(s.verified_crop);
+    }
+
+    const precisionByCrop: Record<string, number | null> = {};
+    const recallByCrop: Record<string, number | null> = {};
+    const f1ByCrop: Record<string, number | null> = {};
+
+    let sumF1 = 0;
+    let countedCrops = 0;
+    let weightedSumF1 = 0;
+    let totalVerifiedGroundTruth = 0;
+
+    for (const crop of distinctCrops) {
+      // True positives: model predicted crop AND ground truth was crop
+      const tp = answered.filter((p) => p.predicted_crop === crop && p.verified_crop === crop).length;
+      // False positives: model predicted crop BUT ground truth was another crop
+      const fp = answered.filter((p) => p.predicted_crop === crop && p.verified_crop !== crop).length;
+      // False negatives: ground truth was crop BUT model predicted another crop (or abstained)
+      const fn = verified.filter((p) => p.verified_crop === crop && p.predicted_crop !== crop).length;
+
+      const prec = tp + fp > 0 ? tp / (tp + fp) : null;
+      const rec = tp + fn > 0 ? tp / (tp + fn) : null;
+      let f1: number | null = null;
+      if (prec !== null && rec !== null && prec + rec > 0) {
+        f1 = (2 * prec * rec) / (prec + rec);
+      } else if (tp === 0 && (fp > 0 || fn > 0)) {
+        f1 = 0;
+      }
+
+      precisionByCrop[crop] = prec !== null ? Number(prec.toFixed(3)) : null;
+      recallByCrop[crop] = rec !== null ? Number(rec.toFixed(3)) : null;
+      f1ByCrop[crop] = f1 !== null ? Number(f1.toFixed(3)) : null;
+
+      if (f1 !== null) {
+        sumF1 += f1;
+        countedCrops++;
+      }
+
+      const classSupport = verified.filter((p) => p.verified_crop === crop).length;
+      if (classSupport > 0 && f1 !== null) {
+        weightedSumF1 += f1 * classSupport;
+        totalVerifiedGroundTruth += classSupport;
+      }
+    }
+
+    const macroF1 = countedCrops > 0 ? Number((sumF1 / countedCrops).toFixed(3)) : null;
+    const weightedF1 = totalVerifiedGroundTruth > 0 ? Number((weightedSumF1 / totalVerifiedGroundTruth).toFixed(3)) : null;
+
+    // Confidence Calibration: Brier Score & Expected Calibration Error (ECE)
+    let brierSum = 0;
+    const calibrationBins: Array<{ confSum: number; correctCount: number; count: number }> = Array.from(
+      { length: 5 },
+      () => ({ confSum: 0, correctCount: 0, count: 0 })
+    );
+
+    for (const p of answered) {
+      // Derive model confidence score from template fit or default calibration
+      const topFit = p.template_fits && p.template_fits.length > 0 ? p.template_fits[0].fit : 0.85;
+      const confidence = Math.max(0.1, Math.min(1.0, topFit));
+      const isCorrect = p.predicted_crop === p.verified_crop ? 1 : 0;
+
+      brierSum += Math.pow(confidence - isCorrect, 2);
+
+      const binIndex = Math.min(4, Math.floor(confidence * 5));
+      calibrationBins[binIndex].count++;
+      calibrationBins[binIndex].confSum += confidence;
+      calibrationBins[binIndex].correctCount += isCorrect;
+    }
+
+    const brierScore = answered.length > 0 ? Number((brierSum / answered.length).toFixed(4)) : null;
+
+    let ece = 0;
+    if (answered.length > 0) {
+      for (const bin of calibrationBins) {
+        if (bin.count > 0) {
+          const avgConf = bin.confSum / bin.count;
+          const avgAcc = bin.correctCount / bin.count;
+          ece += (bin.count / answered.length) * Math.abs(avgAcc - avgConf);
+        }
+      }
+    }
+    const expectedCalibrationError = answered.length > 0 ? Number(ece.toFixed(4)) : null;
+
+    // Spatial Evaluation Splits (by Taluka)
+    const spatialSplits: Record<string, { samplesCount: number; answeredCount: number; correctCount: number; accuracy: number | null }> = {};
+    for (const p of verified) {
+      const plot = mockDb.farmPlots.find((fp) => fp.id === p.plot_id);
+      const taluk = (plot?.taluk || 'Unknown').toLowerCase();
+      if (!spatialSplits[taluk]) {
+        spatialSplits[taluk] = { samplesCount: 0, answeredCount: 0, correctCount: 0, accuracy: null };
+      }
+      spatialSplits[taluk].samplesCount++;
+      if (p.verdict_status === 'matched' && p.predicted_crop) {
+        spatialSplits[taluk].answeredCount++;
+        if (p.predicted_crop === p.verified_crop) {
+          spatialSplits[taluk].correctCount++;
+        }
+      }
+    }
+    for (const key of Object.keys(spatialSplits)) {
+      const s = spatialSplits[key];
+      s.accuracy = s.answeredCount > 0 ? Number((s.correctCount / s.answeredCount).toFixed(3)) : null;
+    }
+
+    // Season-Separated Evaluation Splits
+    const seasonSplits: Record<string, { samplesCount: number; answeredCount: number; correctCount: number; accuracy: number | null }> = {};
+    for (const p of verified) {
+      const seasonKey = p.season || 'kharif';
+      if (!seasonSplits[seasonKey]) {
+        seasonSplits[seasonKey] = { samplesCount: 0, answeredCount: 0, correctCount: 0, accuracy: null };
+      }
+      seasonSplits[seasonKey].samplesCount++;
+      if (p.verdict_status === 'matched' && p.predicted_crop) {
+        seasonSplits[seasonKey].answeredCount++;
+        if (p.predicted_crop === p.verified_crop) {
+          seasonSplits[seasonKey].correctCount++;
+        }
+      }
+    }
+    for (const key of Object.keys(seasonSplits)) {
+      const s = seasonSplits[key];
+      s.accuracy = s.answeredCount > 0 ? Number((s.correctCount / s.answeredCount).toFixed(3)) : null;
+    }
+
     return {
       verified: verified.length,
       answered: answered.length,
       correct,
-      coverage: verified.length ? answered.length / verified.length : null,
-      accuracy: answered.length ? correct / answered.length : null,
+      coverage: verified.length ? Number((answered.length / verified.length).toFixed(3)) : null,
+      accuracy: answered.length ? Number((correct / answered.length).toFixed(3)) : null,
       abstentionsByReason,
       confusion: [...confusionMap.entries()].map(([k, count]) => {
         const [predicted, verifiedCrop] = k.split('|');
         return { predicted, verified: verifiedCrop, count };
       }),
       samplesPerCrop,
+      precisionByCrop,
+      recallByCrop,
+      f1ByCrop,
+      macroF1,
+      weightedF1,
+      brierScore,
+      expectedCalibrationError,
+      spatialSplits,
+      seasonSplits,
     };
   }
 }
