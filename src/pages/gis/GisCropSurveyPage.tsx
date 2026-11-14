@@ -21,6 +21,7 @@ import {
   Sprout,
   BarChart3,
   Sliders,
+  FileSpreadsheet,
 } from 'lucide-react';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { Card } from '@/components/ui/Card';
@@ -32,6 +33,7 @@ import { SatelliteSearchModal } from '@/components/satellite/SatelliteSearchModa
 import { PlotWeatherDrawer } from '@/components/weather/PlotWeatherDrawer';
 import { CropIntelligenceModal } from '@/components/intelligence/CropIntelligenceModal';
 import { MobileFieldSurveyModal } from '@/components/field-survey/MobileFieldSurveyModal';
+import { CoordinateSurveyPanel } from '@/components/gis/CoordinateSurveyPanel';
 import { plotService } from '@/services/plot.service';
 import { reportService } from '@/services/report.service';
 import { mockDb } from '@/services/mock-db';
@@ -86,6 +88,9 @@ export const GisCropSurveyPage: React.FC = () => {
   // Crop Area Estimation Aggregation State (Challenge Module A)
   const [acreageSummary, setAcreageSummary] = useState<AcreageAggregation | null>(null);
   const [showAcreagePanel, setShowAcreagePanel] = useState(false);
+
+  // Coordinate sheet survey (client Excel of GPS points → crop, situation, yield)
+  const [showCoordinateSurvey, setShowCoordinateSurvey] = useState(false);
 
   // Register New Plot Form State
   const [formPlotName, setFormPlotName] = useState('');
@@ -352,6 +357,15 @@ export const GisCropSurveyPage: React.FC = () => {
             <div className="flex items-center gap-2">
               <Button
                 size="sm"
+                variant={showCoordinateSurvey ? 'primary' : 'outline'}
+                icon={<FileSpreadsheet className="w-3.5 h-3.5" />}
+                onClick={() => setShowCoordinateSurvey(!showCoordinateSurvey)}
+              >
+                Coordinate Survey (Excel)
+              </Button>
+
+              <Button
+                size="sm"
                 variant={showAcreagePanel ? 'primary' : 'outline'}
                 icon={<BarChart3 className="w-3.5 h-3.5" />}
                 onClick={() => setShowAcreagePanel(!showAcreagePanel)}
@@ -440,8 +454,11 @@ export const GisCropSurveyPage: React.FC = () => {
           </div>
         </Card>
 
+        {/* Coordinate sheet survey: works for any coordinates, not only pilot talukas */}
+        {showCoordinateSurvey && <CoordinateSurveyPanel onClose={() => setShowCoordinateSurvey(false)} />}
+
         {/* Non-Pilot Region Notice (Challenge Module E Requirement) */}
-        {!isPilotZone && (
+        {!showCoordinateSurvey && !isPilotZone && (
           <div className="p-4 rounded-xl border border-amber-300 bg-amber-50 text-amber-900 flex items-start gap-3 shadow-xs">
             <MapPin className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
             <div className="text-xs space-y-1">

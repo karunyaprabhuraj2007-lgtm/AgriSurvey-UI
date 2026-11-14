@@ -211,6 +211,19 @@ AgriSurvey integrates high-cadence Earth Observation data with the **GM-ML-V2 Re
 
 ---
 
+## 📍 Coordinate Crop Survey (client Excel sheets)
+
+`/gis/crop-survey` → **Coordinate Survey (Excel)** answers a district coordinate sheet such as the Akola sheet (Sr. No., "lat,lon", crop, crop situation 15–25 July, crop situation 15–25 August, estimated yield kg/ha):
+
+1. Upload the client's `.xlsx` (or a `.csv` with a coordinates column, or Latitude / Longitude columns). The header row and answer columns are detected from the header text; points within 10 m of an earlier point reuse its result.
+2. Choose the kharif year, the two assessment windows, the sampled radius (default 20 m) and the crops grown in the district (preset to soybean, cotton, tur, jowar for Akola sheets).
+3. Every point is read on real Sentinel-2 L2A passes (Earth Search STAC + COG range reads, SCL cloud mask, no credentials): one clearest pass per 10-day bin for the season curve, plus every pass in each window ±3 days.
+4. **Download filled Excel** writes the answers into the client's own workbook (columns C–F, original formatting kept) and adds *Point details*, *Raw observations*, *All passes read*, *Vegetation indices*, *Method & limitations* and *Satellite images* sheets. GeoJSON export is also available.
+
+Crop identification uses the phenology template matcher (`src/lib/crop-phenology.ts`); fields still green at the end of the window are compared against long-duration crops only (cotton / tur) and labelled *probable*. Window situations come from the clear passes inside the window, or an interpolation labelled as an estimate. Yields are regional reference values (ICAR-CRIDA, PDKV Akola zone) scaled 0.70–1.30× by the field's seasonal NDVI percentile among same-crop fields. None of it is field-calibrated; ground photographs and officer verification are still required.
+
+Logic: `src/lib/coordinate-survey.ts` · runner and Excel round-trip: `src/services/coordinate-survey.service.ts` · UI: `src/components/gis/CoordinateSurveyPanel.tsx` · tests: `npx tsx scripts/test-coordinate-survey.ts [sheet.xlsx]`.
+
 ## 👤 Quick Evaluation Personas
 
 For streamlined testing in development mode, use the **Persona Switcher** in the top navigation bar or log in with these accounts:
