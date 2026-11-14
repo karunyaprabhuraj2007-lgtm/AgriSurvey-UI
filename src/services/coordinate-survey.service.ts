@@ -335,7 +335,7 @@ export async function runCoordinateSurvey(points: SurveyPoint[], opts: SurveyRun
         r = {
           point: p,
           status: 'error',
-          error: /failed to fetch|networkerror|load failed/i.test(msg)
+          error: /failed to fetch|fetch failed|networkerror|load failed|ENOTFOUND|ECONNRE/i.test(msg)
             ? 'Could not reach the Sentinel-2 archive (Earth Search / AWS). Check the connection and use "Retry failed points".'
             : msg,
           observations: [],

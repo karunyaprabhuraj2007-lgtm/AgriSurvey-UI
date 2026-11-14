@@ -8,6 +8,7 @@
     "build": "tsc -b && vite build",
     "lint": "oxlint",
     "preview": "vite preview",
+    "survey": "tsx scripts/run-coordinate-survey.ts",
     "test": "tsx scripts/test-ml-models.ts && tsx scripts/run-acceptance-tests.ts && tsx scripts/test-geospatial-suite.ts && tsx scripts/test-farmer-workflow.ts && tsx scripts/test-gis-e2e.ts && tsx scripts/test-challenge-compliance.ts && tsx scripts/test-coordinate-survey.ts"
   },
   "dependencies": {
@@ -31,6 +32,7 @@
     "zod": "^4.6.7"
   },
   "devDependencies": {
+    "@napi-rs/canvas": "^1.1.1",
     "@tailwindcss/vite": "^4.3.3",
     "@types/leaflet": "^1.9.22",
     "@types/node": "^24.13.3",

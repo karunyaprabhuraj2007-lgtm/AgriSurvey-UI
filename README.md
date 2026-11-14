@@ -222,6 +222,8 @@ AgriSurvey integrates high-cadence Earth Observation data with the **GM-ML-V2 Re
 
 Crop identification uses the phenology template matcher (`src/lib/crop-phenology.ts`); fields still green at the end of the window are compared against long-duration crops only (cotton / tur) and labelled *probable*. Window situations come from the clear passes inside the window, or an interpolation labelled as an estimate. Yields are regional reference values (ICAR-CRIDA, PDKV Akola zone) scaled 0.70–1.30× by the field's seasonal NDVI percentile among same-crop fields. None of it is field-calibrated; ground photographs and officer verification are still required.
 
+**Command line** (same engine, any machine with internet): `npm install && npm run survey -- Crop_Coordinates_for_Akola.xlsx` writes `Crop_Coordinates_for_Akola_AgriSurvey_filled.xlsx` next to the sheet and prints the results table. Options: `--year 2026 --crops soybean,cotton,tur,jowar --radius 20 --out file.xlsx`. Interrupted runs resume from `<out>.progress.json`.
+
 Logic: `src/lib/coordinate-survey.ts` · runner and Excel round-trip: `src/services/coordinate-survey.service.ts` · UI: `src/components/gis/CoordinateSurveyPanel.tsx` · tests: `npx tsx scripts/test-coordinate-survey.ts [sheet.xlsx]`.
 
 ## 👤 Quick Evaluation Personas
